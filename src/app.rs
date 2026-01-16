@@ -9,10 +9,60 @@ use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 
 // ============================================================================
-// CONFIGURATION - Change this to point to your GitHub repository
+// CONFIGURATION - Repository options for the dropdown
 // ============================================================================
-const DEFAULT_GITHUB_REPO: &str = "spruceUI/spruceOS";
+const REPO_OPTIONS: &[(&str, &str)] = &[
+    ("SpruceOS (Stable)", "spruceUI/spruceOS"),
+    ("SpruceOS (Nightlies)", "spruceUI/spruceOSNightlies"),
+];
+const DEFAULT_REPO_INDEX: usize = 0; // Index of the default selection
 // ============================================================================
+
+// SpruceOS Theme Colors
+const COLOR_BG_DARK: egui::Color32 = egui::Color32::from_rgb(45, 45, 45);       // #2D2D2D
+const COLOR_BG_MEDIUM: egui::Color32 = egui::Color32::from_rgb(55, 55, 55);     // #373737
+const COLOR_BG_LIGHT: egui::Color32 = egui::Color32::from_rgb(70, 70, 70);      // #464646
+const COLOR_GOLD: egui::Color32 = egui::Color32::from_rgb(212, 168, 75);        // #D4A84B
+const COLOR_GOLD_DIM: egui::Color32 = egui::Color32::from_rgb(170, 135, 60);    // Dimmer gold
+const COLOR_TEXT: egui::Color32 = egui::Color32::from_rgb(180, 175, 165);       // #B4AFA5
+const COLOR_TEXT_DIM: egui::Color32 = egui::Color32::from_rgb(139, 133, 120);   // #8B8578
+const COLOR_GREEN: egui::Color32 = egui::Color32::from_rgb(91, 154, 91);        // #5B9A5B
+const COLOR_RED: egui::Color32 = egui::Color32::from_rgb(180, 90, 90);          // Muted red
+
+fn setup_spruce_theme(ctx: &egui::Context) {
+    let mut visuals = egui::Visuals::dark();
+
+    // Window and panel backgrounds
+    visuals.panel_fill = COLOR_BG_DARK;
+    visuals.window_fill = COLOR_BG_DARK;
+    visuals.extreme_bg_color = COLOR_BG_DARK;
+    visuals.faint_bg_color = COLOR_BG_MEDIUM;
+
+    // Widget colors
+    visuals.widgets.noninteractive.bg_fill = COLOR_BG_MEDIUM;
+    visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, COLOR_TEXT_DIM);
+
+    visuals.widgets.inactive.bg_fill = COLOR_BG_LIGHT;
+    visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, COLOR_TEXT);
+
+    visuals.widgets.hovered.bg_fill = COLOR_GOLD_DIM;
+    visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
+
+    visuals.widgets.active.bg_fill = COLOR_GOLD;
+    visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, COLOR_BG_DARK);
+
+    visuals.widgets.open.bg_fill = COLOR_BG_LIGHT;
+    visuals.widgets.open.fg_stroke = egui::Stroke::new(1.0, COLOR_TEXT);
+
+    // Selection color
+    visuals.selection.bg_fill = COLOR_GOLD_DIM;
+    visuals.selection.stroke = egui::Stroke::new(1.0, COLOR_GOLD);
+
+    // Hyperlink color
+    visuals.hyperlink_color = COLOR_GOLD;
+
+    ctx.set_visuals(visuals);
+}
 
 #[derive(Debug, Clone, PartialEq)]
 enum AppState {
@@ -39,7 +89,7 @@ pub struct InstallerApp {
     // UI State
     drives: Vec<DriveInfo>,
     selected_drive_idx: Option<usize>,
-    github_repo: String,
+    selected_repo_idx: usize,
     release_info: Option<Release>,
 
     // Progress tracking
@@ -52,14 +102,17 @@ pub struct InstallerApp {
 }
 
 impl InstallerApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        // Apply SpruceOS theme
+        setup_spruce_theme(&cc.egui_ctx);
+
         let runtime = Runtime::new().expect("Failed to create Tokio runtime");
 
         let mut app = Self {
             runtime,
             drives: Vec::new(),
             selected_drive_idx: None,
-            github_repo: String::from(DEFAULT_GITHUB_REPO),
+            selected_repo_idx: DEFAULT_REPO_INDEX,
             release_info: None,
             state: AppState::Idle,
             progress: Arc::new(Mutex::new(ProgressInfo {
@@ -121,9 +174,10 @@ impl InstallerApp {
         };
 
         self.state = AppState::FetchingRelease;
-        self.log(&format!("Starting installation to drive {}:", drive.letter));
+        let (repo_name, repo_url) = REPO_OPTIONS[self.selected_repo_idx];
+        self.log(&format!("Starting installation to drive {}: using {}", drive.letter, repo_name));
 
-        let repo_url = self.github_repo.clone();
+        let repo_url = repo_url.to_string();
         let progress = self.progress.clone();
         let log_messages = self.log_messages.clone();
         let ctx_clone = ctx.clone();
@@ -277,12 +331,31 @@ impl InstallerApp {
             let _ = fmt_handle.await;
             log("Format complete");
 
+            let dest_path = PathBuf::from(format!("{}:\\", drive.letter));
+
+            // Create a log file on the SD card for debugging
+            let log_file_path = dest_path.join("install_log.txt");
+            let write_card_log = |msg: &str| {
+                use std::io::Write;
+                if let Ok(mut file) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&log_file_path)
+                {
+                    let timestamp = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    let _ = writeln!(file, "[{}] {}", timestamp, msg);
+                }
+            };
+
+            write_card_log("Format complete, starting extraction...");
+
             // Step 4: Extract
             let _ = state_tx_clone.send(AppState::Extracting);
             log("Extracting files to SD card...");
             set_progress(0, 100, "Extracting files...");
-
-            let dest_path = PathBuf::from(format!("{}:\\", drive.letter));
 
             let (ext_tx, mut ext_rx) = mpsc::unbounded_channel::<ExtractProgress>();
             let progress_ext = progress.clone();
@@ -317,19 +390,27 @@ impl InstallerApp {
                 }
             });
 
+            write_card_log(&format!("Calling 7z extraction: {:?} -> {:?}", download_path, dest_path));
+
             if let Err(e) = extract_7z_with_progress(&download_path, &dest_path, ext_tx).await {
+                write_card_log(&format!("Extract error: {}", e));
                 log(&format!("Extract error: {}", e));
                 let _ = state_tx_clone.send(AppState::Error);
                 return;
             }
 
+            write_card_log("extract_7z_with_progress returned successfully");
+
             let _ = ext_handle.await;
             log("Extraction complete");
+            write_card_log("Extraction complete");
 
             // Cleanup temp file
             let _ = tokio::fs::remove_file(&download_path).await;
+            write_card_log("Cleaned up temp download file");
 
             log("Installation complete! You can now safely eject the SD card.");
+            write_card_log("Installation complete!");
             let _ = state_tx_clone.send(AppState::Complete);
         });
 
@@ -374,16 +455,24 @@ impl eframe::App for InstallerApp {
             }
         }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("SpruceOS Installer");
-            ui.add_space(10.0);
+        // Keep requesting repaints while busy so UI stays responsive
+        let is_busy = matches!(
+            self.state,
+            AppState::FetchingRelease
+                | AppState::Downloading
+                | AppState::Formatting
+                | AppState::Extracting
+        );
+        if is_busy {
+            ctx.request_repaint();
+        }
 
-            // GitHub repo input
-            ui.horizontal(|ui| {
-                ui.label("GitHub Repository:");
-                ui.text_edit_singleline(&mut self.github_repo);
-            });
-            ui.add_space(5.0);
+        let panel_frame = egui::Frame::central_panel(&ctx.style())
+            .fill(COLOR_BG_DARK);
+
+        egui::CentralPanel::default().frame(panel_frame).show(ctx, |ui| {
+            ui.heading(egui::RichText::new("SpruceOS Installer").color(COLOR_GOLD));
+            ui.add_space(10.0);
 
             // Drive selection
             ui.horizontal(|ui| {
@@ -414,10 +503,31 @@ impl eframe::App for InstallerApp {
 
             ui.add_space(10.0);
 
+            // Repository selection
+            ui.horizontal(|ui| {
+                ui.label("Release Channel:");
+
+                let selected_repo_name = REPO_OPTIONS[self.selected_repo_idx].0;
+
+                egui::ComboBox::from_id_salt("repo_select")
+                    .selected_text(selected_repo_name)
+                    .show_ui(ui, |ui| {
+                        for (idx, (name, _url)) in REPO_OPTIONS.iter().enumerate() {
+                            ui.selectable_value(
+                                &mut self.selected_repo_idx,
+                                idx,
+                                *name,
+                            );
+                        }
+                    });
+            });
+
+            ui.add_space(10.0);
+
             // Warning
             if self.selected_drive_idx.is_some() {
                 ui.colored_label(
-                    egui::Color32::YELLOW,
+                    COLOR_GOLD,
                     "Warning: This will erase ALL data on the selected drive!",
                 );
             }
@@ -448,23 +558,64 @@ impl eframe::App for InstallerApp {
                     (p.current, p.total, p.message.clone())
                 };
 
-                let progress = if total > 0 {
-                    current as f32 / total as f32
-                } else {
-                    0.0
-                };
+                // Check if we're in a phase with indeterminate progress
+                let is_indeterminate = matches!(
+                    self.state,
+                    AppState::Extracting | AppState::Formatting | AppState::FetchingRelease
+                );
 
-                ui.add(egui::ProgressBar::new(progress).show_percentage());
-                ui.label(&message);
+                if is_indeterminate {
+                    // Animated indeterminate progress bar
+                    let time = ctx.input(|i| i.time);
+
+                    // Allocate space for the progress bar
+                    let desired_size = egui::vec2(ui.available_width(), 20.0);
+                    let (rect, _response) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
+
+                    if ui.is_rect_visible(rect) {
+                        let painter = ui.painter();
+
+                        // Background
+                        painter.rect_filled(rect, 4.0, COLOR_BG_LIGHT);
+
+                        // Animated highlight - moves back and forth
+                        let cycle = (time * 0.8).sin() * 0.5 + 0.5; // 0.0 to 1.0
+                        let bar_width = rect.width() * 0.3;
+                        let bar_x = rect.left() + (rect.width() - bar_width) * cycle as f32;
+
+                        let highlight_rect = egui::Rect::from_min_size(
+                            egui::pos2(bar_x, rect.top()),
+                            egui::vec2(bar_width, rect.height()),
+                        );
+
+                        painter.rect_filled(highlight_rect, 4.0, COLOR_GOLD);
+                    }
+                } else {
+                    // Normal progress bar for downloading
+                    let progress = if total > 0 {
+                        current as f32 / total as f32
+                    } else {
+                        0.0
+                    };
+
+                    ui.add(
+                        egui::ProgressBar::new(progress)
+                            .fill(COLOR_GOLD)
+                            .show_percentage()
+                    );
+                }
+
+                ui.add_space(5.0);
+                ui.colored_label(COLOR_TEXT, &message);
             }
 
             // Status
             match self.state {
                 AppState::Complete => {
-                    ui.colored_label(egui::Color32::GREEN, "Installation complete!");
+                    ui.colored_label(COLOR_GREEN, "Installation complete!");
                 }
                 AppState::Error => {
-                    ui.colored_label(egui::Color32::RED, "Installation failed. See log for details.");
+                    ui.colored_label(COLOR_RED, "Installation failed. See log for details.");
                 }
                 _ => {}
             }

@@ -1,6 +1,16 @@
-use sevenz_rust::decompress_file;
 use std::path::Path;
+use std::process::Stdio;
+use tokio::process::Command;
 use tokio::sync::mpsc;
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+// Embed the 7zr.exe binary directly into our executable
+const SEVEN_ZIP_EXE: &[u8] = include_bytes!("../assets/7zr.exe");
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug, Clone)]
 pub enum ExtractProgress {
@@ -11,23 +21,6 @@ pub enum ExtractProgress {
 }
 
 pub async fn extract_7z(
-    archive_path: &Path,
-    dest_dir: &Path,
-    progress_tx: mpsc::UnboundedSender<ExtractProgress>,
-) -> Result<(), String> {
-    let archive_path = archive_path.to_path_buf();
-    let dest_dir = dest_dir.to_path_buf();
-    let progress_tx_clone = progress_tx.clone();
-
-    // Run extraction in a blocking task since sevenz-rust is synchronous
-    tokio::task::spawn_blocking(move || {
-        extract_7z_sync(&archive_path, &dest_dir, progress_tx_clone)
-    })
-    .await
-    .map_err(|e| format!("Task join error: {}", e))?
-}
-
-fn extract_7z_sync(
     archive_path: &Path,
     dest_dir: &Path,
     progress_tx: mpsc::UnboundedSender<ExtractProgress>,
@@ -47,15 +40,63 @@ fn extract_7z_sync(
 
     let _ = progress_tx.send(ExtractProgress::Extracting);
 
-    // Use the simple decompress_file function from sevenz-rust
-    // This handles the 7z format natively without relying on external tools
-    match decompress_file(archive_path, dest_dir) {
-        Ok(_) => {
-            let _ = progress_tx.send(ExtractProgress::Completed);
-            Ok(())
+    // Extract 7zr.exe to temp directory
+    let temp_dir = std::env::temp_dir();
+    let seven_zip_path = temp_dir.join("7zr_spruce.exe");
+
+    // Write the embedded 7z executable to temp
+    std::fs::write(&seven_zip_path, SEVEN_ZIP_EXE)
+        .map_err(|e| format!("Failed to extract 7z tool: {}", e))?;
+
+    // Run 7zr.exe to extract the archive
+    // Command: 7zr.exe x archive.7z -oDestination -y
+    let output_arg = format!("-o{}", dest_dir.display());
+
+    #[cfg(windows)]
+    let result = Command::new(&seven_zip_path)
+        .arg("x")                           // Extract with full paths
+        .arg(archive_path)                  // Archive to extract
+        .arg(&output_arg)                   // Output directory
+        .arg("-y")                          // Yes to all prompts
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .await;
+
+    #[cfg(not(windows))]
+    let result = Command::new(&seven_zip_path)
+        .arg("x")
+        .arg(archive_path)
+        .arg(&output_arg)
+        .arg("-y")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await;
+
+    // Clean up the temp 7z executable
+    let _ = std::fs::remove_file(&seven_zip_path);
+
+    match result {
+        Ok(output) => {
+            if output.status.success() {
+                let _ = progress_tx.send(ExtractProgress::Completed);
+                Ok(())
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let err_msg = format!(
+                    "7z extraction failed:\n{}\n{}",
+                    stdout.trim(),
+                    stderr.trim()
+                );
+                let _ = progress_tx.send(ExtractProgress::Error(err_msg.clone()));
+                Err(err_msg)
+            }
         }
         Err(e) => {
-            let err_msg = format!("7z extraction failed: {}", e);
+            let err_msg = format!("Failed to run 7z: {}", e);
             let _ = progress_tx.send(ExtractProgress::Error(err_msg.clone()));
             Err(err_msg)
         }
