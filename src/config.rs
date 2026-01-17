@@ -27,6 +27,7 @@ pub const VOLUME_LABEL: &str = "SPRUCEOS";
 pub const REPO_OPTIONS: &[(&str, &str)] = &[
     ("SpruceOS (Stable)", "spruceUI/spruceOS"),
     ("SpruceOS (Nightlies)", "spruceUI/spruceOSNightlies"),
+    ("SprigUI (Stable)", "spruceUI/sprigUI"),
 ];
 
 /// Index of the default repository selection (0 = first option)
