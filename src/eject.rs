@@ -9,94 +9,88 @@ use crate::drives::DriveInfo;
 
 #[cfg(target_os = "windows")]
 pub fn eject_drive(drive: &DriveInfo) -> Result<(), String> {
-    use std::fs::OpenOptions;
-    use std::os::windows::io::AsRawHandle;
-    use windows::Win32::Foundation::HANDLE;
+    use std::mem::size_of;
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        OPEN_EXISTING,
+    };
     use windows::Win32::System::IO::DeviceIoControl;
+    use windows::core::PCWSTR;
 
-    // IOCTL codes for ejecting media
+    // IOCTL codes
     const FSCTL_LOCK_VOLUME: u32 = 0x00090018;
     const FSCTL_DISMOUNT_VOLUME: u32 = 0x00090020;
     const IOCTL_STORAGE_EJECT_MEDIA: u32 = 0x002D4808;
+    const IOCTL_STORAGE_MEDIA_REMOVAL: u32 = 0x002D4804;
+    const FSCTL_UNLOCK_VOLUME: u32 = 0x0009001C;
 
-    // Extract drive letter from device path (e.g., "E:" -> 'E')
-    let drive_letter = drive
-        .device_path
-        .chars()
-        .next()
-        .ok_or_else(|| "Invalid device path".to_string())?;
+    // Extract drive letter
+    let drive_letter = drive.device_path.chars().next().ok_or("Invalid device path")?;
+    let volume_path_str = format!("\\\\.\\{}:", drive_letter);
+    let volume_path_wide: Vec<u16> = volume_path_str.encode_utf16().chain(Some(0)).collect();
 
-    // Open the volume
-    let volume_path = format!("\\\\.\\{}:", drive_letter);
-
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&volume_path)
-        .map_err(|e| format!("Failed to open volume: {}", e))?;
-
-    let handle = HANDLE(file.as_raw_handle() as *mut std::ffi::c_void);
-    let mut bytes_returned = 0u32;
-
-    // Step 1: Lock the volume
-    let result = unsafe {
-        DeviceIoControl(
-            handle,
-            FSCTL_LOCK_VOLUME,
+    // Get a handle to the volume.
+    let handle = unsafe {
+        CreateFileW(
+            PCWSTR(volume_path_wide.as_ptr()),
+            0, // No specific access needed for these IOCTLs
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
             None,
+            OPEN_EXISTING,
             0,
-            None,
-            0,
-            Some(&mut bytes_returned),
             None,
         )
-    };
+    }
+    .map_err(|e| format!("Failed to get volume handle: {}", e))?;
 
-    if result.is_err() {
-        // Lock failed, but we can still try to eject
-        eprintln!("Warning: Could not lock volume, attempting eject anyway");
+    if handle.is_invalid() {
+        return Err("Invalid volume handle".to_string());
+    }
+
+    let mut bytes_returned = 0u32;
+
+    // Step 1: Lock the volume to force dismount
+    unsafe {
+        let _ = DeviceIoControl(handle, FSCTL_LOCK_VOLUME, None, 0, None, 0, Some(&mut bytes_returned), None);
     }
 
     // Step 2: Dismount the volume
-    let result = unsafe {
-        DeviceIoControl(
-            handle,
-            FSCTL_DISMOUNT_VOLUME,
-            None,
-            0,
-            None,
-            0,
-            Some(&mut bytes_returned),
-            None,
-        )
-    };
-
-    if result.is_err() {
-        eprintln!("Warning: Could not dismount volume");
+    unsafe {
+        let _ = DeviceIoControl(handle, FSCTL_DISMOUNT_VOLUME, None, 0, None, 0, Some(&mut bytes_returned), None);
     }
 
-    // Step 3: Eject the media
-    let result = unsafe {
-        DeviceIoControl(
-            handle,
-            IOCTL_STORAGE_EJECT_MEDIA,
-            None,
-            0,
-            None,
-            0,
-            Some(&mut bytes_returned),
-            None,
-        )
+    // Step 3: Set media removal to be allowed
+    #[repr(C)]
+    struct PreventMediaRemoval { PreventMediaRemoval: bool, }
+    let removal_policy = PreventMediaRemoval { PreventMediaRemoval: false };
+
+    unsafe {
+        let _ = DeviceIoControl(
+            handle, IOCTL_STORAGE_MEDIA_REMOVAL,
+            Some(&removal_policy as *const _ as *const std::ffi::c_void),
+            size_of::<PreventMediaRemoval>() as u32,
+            None, 0, Some(&mut bytes_returned), None,
+        );
+    }
+
+    // Step 4: Eject the media
+    let eject_result = unsafe {
+        DeviceIoControl(handle, IOCTL_STORAGE_EJECT_MEDIA, None, 0, None, 0, Some(&mut bytes_returned), None)
     };
 
-    // Close handle (file will be dropped automatically)
-    drop(file);
+    // Step 5: Unlock the volume (cleanup)
+    unsafe {
+        let _ = DeviceIoControl(handle, FSCTL_UNLOCK_VOLUME, None, 0, None, 0, Some(&mut bytes_returned), None);
+    }
 
-    if result.is_err() {
-        // If eject failed, the drive is at least dismounted and safe to remove
+    // Step 6: Close the handle
+    unsafe { CloseHandle(handle); }
+
+    if eject_result.is_ok() {
         Ok(())
     } else {
-        Ok(())
+        Err("Eject command failed. The drive may be dismounted and safe to remove.".to_string())
     }
 }
 

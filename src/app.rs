@@ -1,4 +1,4 @@
-use crate::config::{
+use crate::config{
     setup_theme, APP_NAME, COLOR_ACCENT, COLOR_ACCENT_DIM, COLOR_BG_DARK, COLOR_BG_LIGHT,
     COLOR_ERROR, COLOR_SUCCESS, COLOR_TEXT, COLOR_WARNING, DEFAULT_REPO_INDEX, REPO_OPTIONS,
     VOLUME_LABEL,
@@ -23,6 +23,7 @@ enum AppState {
     Formatting,
     Extracting,
     Complete,
+    Ejecting, // New state for async ejection
     Ejected,
     Error,
 }
@@ -75,7 +76,7 @@ impl InstallerApp {
                 total: 100,
                 message: String::new(),
             })),
-            log_messages: Arc::new(Mutex::new(Vec::new())),
+            log_messages: Arc::new(Mutex::new(Vec::new())) ,
             temp_download_path: None,
             installed_drive: None,
         };
@@ -493,7 +494,7 @@ async fn get_mount_path_after_format(drive: &DriveInfo, volume_label: &str) -> R
     let _ = std::fs::create_dir_all(&mount_point);
 
     // Mount the partition
-    let output = Command::new("sudo")
+    let output = Command::new("pkexec")
         .args(["mount", &partition_path, mount_point.to_str().unwrap()])
         .output()
         .await
@@ -514,26 +515,46 @@ async fn get_mount_path_after_format(_drive: &DriveInfo, _volume_label: &str) ->
 
 impl eframe::App for InstallerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Check for state updates from progress message
-        if let Ok(progress) = self.progress.lock() {
-            if progress.message == "COMPLETE" {
-                self.state = AppState::Complete;
-            } else if progress.message == "ERROR" {
-                self.state = AppState::Error;
-            } else if progress.message.contains("Downloading") {
-                self.state = AppState::Downloading;
-            } else if progress.message.contains("Formatting")
-                || progress.message.contains("format")
-                || progress.message.contains("Unmounting")
-                || progress.message.contains("Cleaning")
-                || progress.message.contains("partition")
-            {
-                self.state = AppState::Formatting;
-            } else if progress.message.contains("Extracting") || progress.message.contains("Extract")
-            {
-                self.state = AppState::Extracting;
+        // Check for state updates from async eject on Windows
+        if let Ok(mut progress) = self.progress.lock() {
+            if progress.message.starts_with("EJECT_") {
+                if progress.message == "EJECT_SUCCESS" {
+                    self.log("SD card safely ejected. You may now remove it.");
+                    self.state = AppState::Ejected;
+                } else if let Some(error_msg) = progress.message.strip_prefix("EJECT_ERROR: ") {
+                    self.log(&format!("Eject warning: {}. The card should still be safe to remove.", error_msg));
+                    self.state = AppState::Ejected;
+                }
+                progress.message.clear(); // Consume the message
             }
         }
+
+        // Check for state updates from main installation process
+        if let Ok(mut progress) = self.progress.lock() {
+            if progress.message == "COMPLETE" {
+                self.state = AppState::Complete;
+                progress.message.clear();
+            } else if progress.message == "ERROR" {
+                self.state = AppState::Error;
+                progress.message.clear();
+            } else if self.state == AppState::Idle || self.state == AppState::AwaitingConfirmation {
+                // Only update state if we are not already in a process
+                if progress.message.contains("Downloading") {
+                    self.state = AppState::Downloading;
+                } else if progress.message.contains("Formatting")
+                    || progress.message.contains("format")
+                    || progress.message.contains("Unmounting")
+                    || progress.message.contains("Cleaning")
+                    || progress.message.contains("partition")
+                {
+                    self.state = AppState::Formatting;
+                } else if progress.message.contains("Extracting") || progress.message.contains("Extract")
+                {
+                    self.state = AppState::Extracting;
+                }
+            }
+        }
+
 
         // Keep requesting repaints while busy so UI stays responsive
         let is_busy = matches!(
@@ -542,6 +563,7 @@ impl eframe::App for InstallerApp {
                 | AppState::Downloading
                 | AppState::Formatting
                 | AppState::Extracting
+                | AppState::Ejecting
         );
         if is_busy {
             ctx.request_repaint();
@@ -661,6 +683,7 @@ impl eframe::App for InstallerApp {
                         | AppState::Formatting
                         | AppState::Extracting
                         | AppState::AwaitingConfirmation
+                        | AppState::Ejecting
                 );
 
                 ui.add_enabled_ui(!is_busy && self.selected_drive_idx.is_some(), |ui| {
@@ -744,19 +767,55 @@ impl eframe::App for InstallerApp {
                         ui.colored_label(COLOR_SUCCESS, "Installation complete!");
                         ui.add_space(5.0);
                         if ui.button("Safely Eject SD Card").clicked() {
-                            if let Some(ref drive) = self.installed_drive {
-                                match eject_drive(drive) {
-                                    Ok(()) => {
-                                        self.log("SD card safely ejected. You may now remove it.");
-                                        self.state = AppState::Ejected;
-                                    }
-                                    Err(e) => {
-                                        self.log(&format!("Eject warning: {}. The card should still be safe to remove.", e));
-                                        self.state = AppState::Ejected;
+                            if let Some(drive) = self.installed_drive.clone() {
+                                #[cfg(target_os = "windows")]
+                                {
+                                    // WINDOWS: Run in background task
+                                    self.state = AppState::Ejecting;
+                                    self.log("Ejecting SD card...");
+                                    
+                                    let progress = self.progress.clone();
+                                    let ctx_clone = ctx.clone();
+
+                                    self.runtime.spawn(async move {
+                                        let result = tokio::task::spawn_blocking(move || {
+                                            eject_drive(&drive)
+                                        }).await.unwrap();
+
+                                        if let Ok(mut progress) = progress.lock() {
+                                            match result {
+                                                Ok(()) => progress.message = "EJECT_SUCCESS".to_string(),
+                                                Err(e) => progress.message = format!("EJECT_ERROR: {}", e),
+                                            }
+                                        }
+                                        ctx_clone.request_repaint();
+                                    });
+                                }
+
+                                #[cfg(not(target_os = "windows"))]
+                                {
+                                    // OTHER PLATFORMS: Run synchronously
+                                    match eject_drive(&drive) {
+                                        Ok(()) => {
+                                            self.log("SD card safely ejected. You may now remove it.");
+                                            self.state = AppState::Ejected;
+                                        }
+                                        Err(e) => {
+                                            self.log(&format!("Eject warning: {}. The card should still be safe to remove.", e));
+                                            self.state = AppState::Ejected;
+                                        }
                                     }
                                 }
                             }
                         }
+                    }
+                    AppState::Ejecting => {
+                        ui.colored_label(COLOR_SUCCESS, "Installation complete!");
+                        ui.add_space(5.0);
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label(" Ejecting SD card...");
+                        });
                     }
                     AppState::Ejected => {
                         ui.colored_label(COLOR_SUCCESS, "SD card ejected! You may safely remove it.");
