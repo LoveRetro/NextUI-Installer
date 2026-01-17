@@ -213,39 +213,28 @@ fn find_linux_mount_info(device_path: &str, device_name: &str) -> (Option<PathBu
 #[cfg(target_os = "macos")]
 pub fn get_removable_drives() -> Vec<DriveInfo> {
     use std::process::Command;
+    use std::collections::HashSet;
 
     let mut drives = Vec::new();
+    let mut disk_ids: HashSet<String> = HashSet::new();
 
-    // Use diskutil to list external/removable disks
-    let output = Command::new("diskutil")
+    // Try listing external disks first
+    if let Ok(output) = Command::new("diskutil")
         .args(["list", "-plist", "external"])
-        .output();
-
-    let Ok(output) = output else {
-        return drives;
-    };
-
-    if !output.status.success() {
-        return drives;
+        .output()
+    {
+        if output.status.success() {
+            parse_diskutil_plist(&String::from_utf8_lossy(&output.stdout), &mut disk_ids);
+        }
     }
 
-    // Parse the plist output to get disk identifiers
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    // Simple parsing - find disk identifiers like "disk2", "disk3", etc.
-    let mut disk_ids: Vec<String> = Vec::new();
-    for line in stdout.lines() {
-        let line = line.trim();
-        if line.contains("<string>disk") && !line.contains("s") {
-            // Extract disk ID
-            if let Some(start) = line.find("disk") {
-                if let Some(end) = line[start..].find('<') {
-                    let disk_id = &line[start..start + end];
-                    if !disk_ids.contains(&disk_id.to_string()) {
-                        disk_ids.push(disk_id.to_string());
-                    }
-                }
-            }
+    // Also try listing all disks (for built-in SD card readers)
+    if let Ok(output) = Command::new("diskutil")
+        .args(["list", "-plist"])
+        .output()
+    {
+        if output.status.success() {
+            parse_diskutil_plist(&String::from_utf8_lossy(&output.stdout), &mut disk_ids);
         }
     }
 
@@ -257,6 +246,31 @@ pub fn get_removable_drives() -> Vec<DriveInfo> {
     }
 
     drives
+}
+
+#[cfg(target_os = "macos")]
+fn parse_diskutil_plist(stdout: &str, disk_ids: &mut std::collections::HashSet<String>) {
+    // Parse plist to find whole disk identifiers like "disk2", "disk3"
+    // Avoid partitions like "disk2s1"
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.starts_with("<string>disk") {
+            // Extract the disk ID between <string> and </string>
+            if let Some(start) = line.find("disk") {
+                if let Some(end) = line.find("</string>") {
+                    let disk_id = &line[start..end];
+                    // Only include whole disks (no 's' followed by a number = partition)
+                    if !disk_id.contains('s') || !disk_id.chars().last().unwrap_or('x').is_ascii_digit() {
+                        // Double check it's a valid disk ID pattern (disk followed by number)
+                        let after_disk = &disk_id[4..];
+                        if after_disk.chars().all(|c| c.is_ascii_digit()) && !after_disk.is_empty() {
+                            disk_ids.insert(disk_id.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -278,6 +292,7 @@ fn get_macos_disk_info(disk_id: &str) -> Option<DriveInfo> {
     let mut label = String::new();
     let mut mount_point: Option<PathBuf> = None;
     let mut is_removable = false;
+    let mut is_internal = false;
 
     for line in info.lines() {
         let line = line.trim();
@@ -302,13 +317,33 @@ fn get_macos_disk_info(disk_id: &str) -> Option<DriveInfo> {
                 mount_point = Some(PathBuf::from(mp));
             }
         } else if line.starts_with("Removable Media:") {
-            is_removable = line.contains("Removable");
+            // Can be "Removable", "Yes", or "Fixed"/"No"
+            let value = line.replace("Removable Media:", "").trim().to_lowercase();
+            is_removable = value.contains("removable") || value.contains("yes");
         } else if line.starts_with("Protocol:") {
-            // USB devices are typically removable even if not marked as such
-            if line.contains("USB") {
+            // USB and SD card protocols indicate removable media
+            let protocol = line.to_lowercase();
+            if protocol.contains("usb") || protocol.contains("secure digital") || protocol.contains("sd") {
+                is_removable = true;
+            }
+        } else if line.starts_with("Device Location:") {
+            // Check if it's internal (we want to skip main system drives)
+            if line.to_lowercase().contains("internal") {
+                is_internal = true;
+            }
+        } else if line.starts_with("Media Type:") {
+            // SD cards often show as "SD Card" or similar
+            let media_type = line.to_lowercase();
+            if media_type.contains("sd") || media_type.contains("card") {
                 is_removable = true;
             }
         }
+    }
+
+    // Skip internal non-removable drives (like the system SSD)
+    // But allow internal SD card readers (is_removable would be true for those)
+    if is_internal && !is_removable {
+        return None;
     }
 
     // Only return if it's removable and has a size
