@@ -12,7 +12,7 @@ pub fn eject_drive(drive: &DriveInfo) -> Result<(), String> {
     use std::mem::size_of;
     use windows::Win32::Foundation::{CloseHandle, HANDLE};
     use windows::Win32::Storage::FileSystem::{
-        CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE,
         OPEN_EXISTING,
     };
     use windows::Win32::System::IO::DeviceIoControl;
@@ -38,7 +38,7 @@ pub fn eject_drive(drive: &DriveInfo) -> Result<(), String> {
             FILE_SHARE_READ | FILE_SHARE_WRITE,
             None,
             OPEN_EXISTING,
-            0,
+            FILE_FLAGS_AND_ATTRIBUTES(0),
             None,
         )
     }
