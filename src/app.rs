@@ -1,3 +1,7 @@
+use crate::config::{
+    setup_theme, APP_NAME, COLOR_ACCENT, COLOR_BG_DARK, COLOR_BG_LIGHT, COLOR_ERROR,
+    COLOR_SUCCESS, COLOR_TEXT, COLOR_WARNING, DEFAULT_REPO_INDEX, REPO_OPTIONS, VOLUME_LABEL,
+};
 use crate::drives::{get_removable_drives, DriveInfo};
 use crate::extract::{extract_7z_with_progress, ExtractProgress};
 use crate::format::{format_drive_fat32, FormatProgress};
@@ -8,65 +12,10 @@ use std::sync::{Arc, Mutex};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 
-// ============================================================================
-// CONFIGURATION - Repository options for the dropdown
-// ============================================================================
-const REPO_OPTIONS: &[(&str, &str)] = &[
-    ("SpruceOS (Stable)", "spruceUI/spruceOS"),
-    ("SpruceOS (Nightlies)", "spruceUI/spruceOSNightlies"),
-];
-const DEFAULT_REPO_INDEX: usize = 0; // Index of the default selection
-// ============================================================================
-
-// SpruceOS Theme Colors
-const COLOR_BG_DARK: egui::Color32 = egui::Color32::from_rgb(45, 45, 45);       // #2D2D2D
-const COLOR_BG_MEDIUM: egui::Color32 = egui::Color32::from_rgb(55, 55, 55);     // #373737
-const COLOR_BG_LIGHT: egui::Color32 = egui::Color32::from_rgb(70, 70, 70);      // #464646
-const COLOR_GOLD: egui::Color32 = egui::Color32::from_rgb(212, 168, 75);        // #D4A84B
-const COLOR_GOLD_DIM: egui::Color32 = egui::Color32::from_rgb(170, 135, 60);    // Dimmer gold
-const COLOR_TEXT: egui::Color32 = egui::Color32::from_rgb(180, 175, 165);       // #B4AFA5
-const COLOR_TEXT_DIM: egui::Color32 = egui::Color32::from_rgb(139, 133, 120);   // #8B8578
-const COLOR_GREEN: egui::Color32 = egui::Color32::from_rgb(91, 154, 91);        // #5B9A5B
-const COLOR_RED: egui::Color32 = egui::Color32::from_rgb(180, 90, 90);          // Muted red
-
-fn setup_spruce_theme(ctx: &egui::Context) {
-    let mut visuals = egui::Visuals::dark();
-
-    // Window and panel backgrounds
-    visuals.panel_fill = COLOR_BG_DARK;
-    visuals.window_fill = COLOR_BG_DARK;
-    visuals.extreme_bg_color = COLOR_BG_DARK;
-    visuals.faint_bg_color = COLOR_BG_MEDIUM;
-
-    // Widget colors
-    visuals.widgets.noninteractive.bg_fill = COLOR_BG_MEDIUM;
-    visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, COLOR_TEXT_DIM);
-
-    visuals.widgets.inactive.bg_fill = COLOR_BG_LIGHT;
-    visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, COLOR_TEXT);
-
-    visuals.widgets.hovered.bg_fill = COLOR_GOLD_DIM;
-    visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
-
-    visuals.widgets.active.bg_fill = COLOR_GOLD;
-    visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, COLOR_BG_DARK);
-
-    visuals.widgets.open.bg_fill = COLOR_BG_LIGHT;
-    visuals.widgets.open.fg_stroke = egui::Stroke::new(1.0, COLOR_TEXT);
-
-    // Selection color
-    visuals.selection.bg_fill = COLOR_GOLD_DIM;
-    visuals.selection.stroke = egui::Stroke::new(1.0, COLOR_GOLD);
-
-    // Hyperlink color
-    visuals.hyperlink_color = COLOR_GOLD;
-
-    ctx.set_visuals(visuals);
-}
-
 #[derive(Debug, Clone, PartialEq)]
 enum AppState {
     Idle,
+    AwaitingConfirmation,
     FetchingRelease,
     Downloading,
     Formatting,
@@ -103,8 +52,8 @@ pub struct InstallerApp {
 
 impl InstallerApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        // Apply SpruceOS theme
-        setup_spruce_theme(&cc.egui_ctx);
+        // Apply theme from config
+        setup_theme(&cc.egui_ctx);
 
         let runtime = Runtime::new().expect("Failed to create Tokio runtime");
 
@@ -154,14 +103,6 @@ impl InstallerApp {
         }
     }
 
-    fn set_progress(&self, current: u64, total: u64, message: &str) {
-        if let Ok(mut progress) = self.progress.lock() {
-            progress.current = current;
-            progress.total = total;
-            progress.message = message.to_string();
-        }
-    }
-
     fn start_installation(&mut self, ctx: egui::Context) {
         let Some(drive_idx) = self.selected_drive_idx else {
             self.log("No drive selected");
@@ -175,12 +116,16 @@ impl InstallerApp {
 
         self.state = AppState::FetchingRelease;
         let (repo_name, repo_url) = REPO_OPTIONS[self.selected_repo_idx];
-        self.log(&format!("Starting installation to drive {}: using {}", drive.letter, repo_name));
+        self.log(&format!(
+            "Starting installation to drive {}: using {}",
+            drive.letter, repo_name
+        ));
 
         let repo_url = repo_url.to_string();
         let progress = self.progress.clone();
         let log_messages = self.log_messages.clone();
         let ctx_clone = ctx.clone();
+        let volume_label = VOLUME_LABEL.to_string();
 
         // Channel for state updates
         let (state_tx, mut state_rx) = mpsc::unbounded_channel::<AppState>();
@@ -322,7 +267,7 @@ impl InstallerApp {
                 }
             });
 
-            if let Err(e) = format_drive_fat32(drive.letter, "SPRUCEOS", fmt_tx).await {
+            if let Err(e) = format_drive_fat32(drive.letter, &volume_label, fmt_tx).await {
                 log(&format!("Format error: {}", e));
                 let _ = state_tx_clone.send(AppState::Error);
                 return;
@@ -390,7 +335,10 @@ impl InstallerApp {
                 }
             });
 
-            write_card_log(&format!("Calling 7z extraction: {:?} -> {:?}", download_path, dest_path));
+            write_card_log(&format!(
+                "Calling 7z extraction: {:?} -> {:?}",
+                download_path, dest_path
+            ));
 
             if let Err(e) = extract_7z_with_progress(&download_path, &dest_path, ext_tx).await {
                 write_card_log(&format!("Extract error: {}", e));
@@ -448,9 +396,11 @@ impl eframe::App for InstallerApp {
                 self.state = AppState::Error;
             } else if progress.message.contains("Downloading") {
                 self.state = AppState::Downloading;
-            } else if progress.message.contains("Formatting") || progress.message.contains("format") {
+            } else if progress.message.contains("Formatting") || progress.message.contains("format")
+            {
                 self.state = AppState::Formatting;
-            } else if progress.message.contains("Extracting") || progress.message.contains("Extract") {
+            } else if progress.message.contains("Extracting") || progress.message.contains("Extract")
+            {
                 self.state = AppState::Extracting;
             }
         }
@@ -467,175 +417,222 @@ impl eframe::App for InstallerApp {
             ctx.request_repaint();
         }
 
-        let panel_frame = egui::Frame::central_panel(&ctx.style())
-            .fill(COLOR_BG_DARK);
+        // Show confirmation dialog if awaiting confirmation
+        if self.state == AppState::AwaitingConfirmation {
+            egui::Window::new("Confirm Installation")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(10.0);
+                        ui.colored_label(COLOR_WARNING, "WARNING");
+                        ui.add_space(10.0);
 
-        egui::CentralPanel::default().frame(panel_frame).show(ctx, |ui| {
-            ui.heading(egui::RichText::new("SpruceOS Installer").color(COLOR_GOLD));
-            ui.add_space(10.0);
+                        ui.label("This will DELETE ALL DATA on the selected drive:");
+                        ui.add_space(5.0);
 
-            // Drive selection
-            ui.horizontal(|ui| {
-                ui.label("Target Drive:");
-
-                let selected_text = self
-                    .selected_drive_idx
-                    .and_then(|idx| self.drives.get(idx))
-                    .map(|d| d.display_name())
-                    .unwrap_or_else(|| "No drives found".to_string());
-
-                egui::ComboBox::from_id_salt("drive_select")
-                    .selected_text(&selected_text)
-                    .show_ui(ui, |ui| {
-                        for (idx, drive) in self.drives.iter().enumerate() {
-                            ui.selectable_value(
-                                &mut self.selected_drive_idx,
-                                Some(idx),
-                                drive.display_name(),
-                            );
+                        if let Some(idx) = self.selected_drive_idx {
+                            if let Some(drive) = self.drives.get(idx) {
+                                ui.colored_label(COLOR_ACCENT, drive.display_name());
+                            }
                         }
+
+                        ui.add_space(10.0);
+                        ui.label("Are you sure you want to continue?");
+                        ui.add_space(15.0);
+
+                        ui.horizontal(|ui| {
+                            if ui.button("Cancel").clicked() {
+                                self.state = AppState::Idle;
+                            }
+
+                            ui.add_space(20.0);
+
+                            if ui
+                                .add(egui::Button::new("Yes, Install").fill(COLOR_ERROR))
+                                .clicked()
+                            {
+                                self.start_installation(ctx.clone());
+                            }
+                        });
+
+                        ui.add_space(10.0);
                     });
+                });
+        }
 
-                if ui.button("Refresh").clicked() {
-                    self.refresh_drives();
-                }
-            });
+        let panel_frame = egui::Frame::central_panel(&ctx.style()).fill(COLOR_BG_DARK);
 
-            ui.add_space(10.0);
-
-            // Repository selection
-            ui.horizontal(|ui| {
-                ui.label("Release Channel:");
-
-                let selected_repo_name = REPO_OPTIONS[self.selected_repo_idx].0;
-
-                egui::ComboBox::from_id_salt("repo_select")
-                    .selected_text(selected_repo_name)
-                    .show_ui(ui, |ui| {
-                        for (idx, (name, _url)) in REPO_OPTIONS.iter().enumerate() {
-                            ui.selectable_value(
-                                &mut self.selected_repo_idx,
-                                idx,
-                                *name,
-                            );
-                        }
-                    });
-            });
-
-            ui.add_space(10.0);
-
-            // Warning
-            if self.selected_drive_idx.is_some() {
-                ui.colored_label(
-                    COLOR_GOLD,
-                    "Warning: This will erase ALL data on the selected drive!",
+        egui::CentralPanel::default()
+            .frame(panel_frame)
+            .show(ctx, |ui| {
+                ui.heading(
+                    egui::RichText::new(format!("{} Installer", APP_NAME)).color(COLOR_ACCENT),
                 );
-            }
+                ui.add_space(10.0);
 
-            ui.add_space(10.0);
+                // Drive selection
+                ui.horizontal(|ui| {
+                    ui.label("Target Drive:");
 
-            // Install button
-            let is_busy = matches!(
-                self.state,
-                AppState::FetchingRelease
-                    | AppState::Downloading
-                    | AppState::Formatting
-                    | AppState::Extracting
-            );
+                    let selected_text = self
+                        .selected_drive_idx
+                        .and_then(|idx| self.drives.get(idx))
+                        .map(|d| d.display_name())
+                        .unwrap_or_else(|| "No drives found".to_string());
 
-            ui.add_enabled_ui(!is_busy && self.selected_drive_idx.is_some(), |ui| {
-                if ui.button("Install SpruceOS").clicked() {
-                    self.start_installation(ctx.clone());
-                }
-            });
+                    egui::ComboBox::from_id_salt("drive_select")
+                        .selected_text(&selected_text)
+                        .show_ui(ui, |ui| {
+                            for (idx, drive) in self.drives.iter().enumerate() {
+                                ui.selectable_value(
+                                    &mut self.selected_drive_idx,
+                                    Some(idx),
+                                    drive.display_name(),
+                                );
+                            }
+                        });
 
-            ui.add_space(10.0);
-
-            // Progress bar
-            if is_busy {
-                let (current, total, message) = {
-                    let p = self.progress.lock().unwrap();
-                    (p.current, p.total, p.message.clone())
-                };
-
-                // Check if we're in a phase with indeterminate progress
-                let is_indeterminate = matches!(
-                    self.state,
-                    AppState::Extracting | AppState::Formatting | AppState::FetchingRelease
-                );
-
-                if is_indeterminate {
-                    // Animated indeterminate progress bar
-                    let time = ctx.input(|i| i.time);
-
-                    // Allocate space for the progress bar
-                    let desired_size = egui::vec2(ui.available_width(), 20.0);
-                    let (rect, _response) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
-
-                    if ui.is_rect_visible(rect) {
-                        let painter = ui.painter();
-
-                        // Background
-                        painter.rect_filled(rect, 4.0, COLOR_BG_LIGHT);
-
-                        // Animated highlight - moves back and forth
-                        let cycle = (time * 0.8).sin() * 0.5 + 0.5; // 0.0 to 1.0
-                        let bar_width = rect.width() * 0.3;
-                        let bar_x = rect.left() + (rect.width() - bar_width) * cycle as f32;
-
-                        let highlight_rect = egui::Rect::from_min_size(
-                            egui::pos2(bar_x, rect.top()),
-                            egui::vec2(bar_width, rect.height()),
-                        );
-
-                        painter.rect_filled(highlight_rect, 4.0, COLOR_GOLD);
-                    }
-                } else {
-                    // Normal progress bar for downloading
-                    let progress = if total > 0 {
-                        current as f32 / total as f32
-                    } else {
-                        0.0
-                    };
-
-                    ui.add(
-                        egui::ProgressBar::new(progress)
-                            .fill(COLOR_GOLD)
-                            .show_percentage()
-                    );
-                }
-
-                ui.add_space(5.0);
-                ui.colored_label(COLOR_TEXT, &message);
-            }
-
-            // Status
-            match self.state {
-                AppState::Complete => {
-                    ui.colored_label(COLOR_GREEN, "Installation complete!");
-                }
-                AppState::Error => {
-                    ui.colored_label(COLOR_RED, "Installation failed. See log for details.");
-                }
-                _ => {}
-            }
-
-            ui.add_space(10.0);
-
-            // Log area
-            ui.separator();
-            ui.label("Log:");
-
-            egui::ScrollArea::vertical()
-                .max_height(150.0)
-                .stick_to_bottom(true)
-                .show(ui, |ui| {
-                    if let Ok(logs) = self.log_messages.lock() {
-                        for msg in logs.iter() {
-                            ui.label(msg);
-                        }
+                    if ui.button("Refresh").clicked() {
+                        self.refresh_drives();
                     }
                 });
-        });
+
+                ui.add_space(10.0);
+
+                // Repository selection
+                ui.horizontal(|ui| {
+                    ui.label("Release Channel:");
+
+                    let selected_repo_name = REPO_OPTIONS[self.selected_repo_idx].0;
+
+                    egui::ComboBox::from_id_salt("repo_select")
+                        .selected_text(selected_repo_name)
+                        .show_ui(ui, |ui| {
+                            for (idx, (name, _url)) in REPO_OPTIONS.iter().enumerate() {
+                                ui.selectable_value(&mut self.selected_repo_idx, idx, *name);
+                            }
+                        });
+                });
+
+                ui.add_space(10.0);
+
+                // Install button
+                let is_busy = matches!(
+                    self.state,
+                    AppState::FetchingRelease
+                        | AppState::Downloading
+                        | AppState::Formatting
+                        | AppState::Extracting
+                        | AppState::AwaitingConfirmation
+                );
+
+                ui.add_enabled_ui(!is_busy && self.selected_drive_idx.is_some(), |ui| {
+                    if ui
+                        .button(format!("Install {}", APP_NAME))
+                        .clicked()
+                    {
+                        self.state = AppState::AwaitingConfirmation;
+                    }
+                });
+
+                ui.add_space(10.0);
+
+                // Progress bar
+                let show_progress = matches!(
+                    self.state,
+                    AppState::FetchingRelease
+                        | AppState::Downloading
+                        | AppState::Formatting
+                        | AppState::Extracting
+                );
+
+                if show_progress {
+                    let (current, total, message) = {
+                        let p = self.progress.lock().unwrap();
+                        (p.current, p.total, p.message.clone())
+                    };
+
+                    // Check if we're in a phase with indeterminate progress
+                    let is_indeterminate = matches!(
+                        self.state,
+                        AppState::Extracting | AppState::Formatting | AppState::FetchingRelease
+                    );
+
+                    if is_indeterminate {
+                        // Animated indeterminate progress bar
+                        let time = ctx.input(|i| i.time);
+
+                        // Allocate space for the progress bar
+                        let desired_size = egui::vec2(ui.available_width(), 20.0);
+                        let (rect, _response) =
+                            ui.allocate_exact_size(desired_size, egui::Sense::hover());
+
+                        if ui.is_rect_visible(rect) {
+                            let painter = ui.painter();
+
+                            // Background
+                            painter.rect_filled(rect, 4.0, COLOR_BG_LIGHT);
+
+                            // Animated highlight - moves back and forth
+                            let cycle = (time * 0.8).sin() * 0.5 + 0.5; // 0.0 to 1.0
+                            let bar_width = rect.width() * 0.3;
+                            let bar_x = rect.left() + (rect.width() - bar_width) * cycle as f32;
+
+                            let highlight_rect = egui::Rect::from_min_size(
+                                egui::pos2(bar_x, rect.top()),
+                                egui::vec2(bar_width, rect.height()),
+                            );
+
+                            painter.rect_filled(highlight_rect, 4.0, COLOR_ACCENT);
+                        }
+                    } else {
+                        // Normal progress bar for downloading
+                        let progress = if total > 0 {
+                            current as f32 / total as f32
+                        } else {
+                            0.0
+                        };
+
+                        ui.add(
+                            egui::ProgressBar::new(progress)
+                                .fill(COLOR_ACCENT)
+                                .show_percentage(),
+                        );
+                    }
+
+                    ui.add_space(5.0);
+                    ui.colored_label(COLOR_TEXT, &message);
+                }
+
+                // Status
+                match self.state {
+                    AppState::Complete => {
+                        ui.colored_label(COLOR_SUCCESS, "Installation complete!");
+                    }
+                    AppState::Error => {
+                        ui.colored_label(COLOR_ERROR, "Installation failed. See log for details.");
+                    }
+                    _ => {}
+                }
+
+                ui.add_space(10.0);
+
+                // Log area
+                ui.separator();
+                ui.label("Log:");
+
+                egui::ScrollArea::vertical()
+                    .max_height(150.0)
+                    .stick_to_bottom(true)
+                    .show(ui, |ui| {
+                        if let Ok(logs) = self.log_messages.lock() {
+                            for msg in logs.iter() {
+                                ui.label(msg);
+                            }
+                        }
+                    });
+            });
     }
 }
