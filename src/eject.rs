@@ -108,17 +108,9 @@ pub fn eject_drive(drive: &DriveInfo) -> Result<(), String> {
 pub fn eject_drive(drive: &DriveInfo) -> Result<(), String> {
     use std::process::Command;
 
-    // First unmount all partitions
-    let mounts = std::fs::read_to_string("/proc/mounts").unwrap_or_default();
-
-    for line in mounts.lines() {
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() >= 2 && parts[0].starts_with(&drive.device_path) {
-            let _ = Command::new("sudo")
-                .args(["umount", parts[1]])
-                .output();
-        }
-    }
+    // udisksctl (called below) handles unmounting partitions before powering off the device.
+    // The explicit `sudo umount` loop is removed as the application now runs with elevated privileges,
+    // and udisksctl is the preferred method for ejecting.
 
     // Try udisksctl first (more modern, handles power-off)
     let output = Command::new("udisksctl")
