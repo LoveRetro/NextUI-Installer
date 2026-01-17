@@ -3,13 +3,20 @@ use std::process::Stdio;
 use tokio::process::Command;
 use tokio::sync::mpsc;
 
-#[cfg(windows)]
+#[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
-// Embed the 7zr.exe binary directly into our executable
-const SEVEN_ZIP_EXE: &[u8] = include_bytes!("../assets/7zr.exe");
+// Embed platform-specific 7z binaries
+#[cfg(target_os = "windows")]
+const SEVEN_ZIP_EXE: &[u8] = include_bytes!("../assets/Windows/7zr.exe");
 
-#[cfg(windows)]
+#[cfg(target_os = "linux")]
+const SEVEN_ZIP_EXE: &[u8] = include_bytes!("../assets/Linux/7zzs");
+
+#[cfg(target_os = "macos")]
+const SEVEN_ZIP_EXE: &[u8] = include_bytes!("../assets/Mac/7zz");
+
+#[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug, Clone)]
@@ -40,19 +47,36 @@ pub async fn extract_7z(
 
     let _ = progress_tx.send(ExtractProgress::Extracting);
 
-    // Extract 7zr.exe to temp directory
+    // Extract 7z binary to temp directory with platform-appropriate name
     let temp_dir = std::env::temp_dir();
+
+    #[cfg(target_os = "windows")]
     let seven_zip_path = temp_dir.join("7zr_spruce.exe");
+
+    #[cfg(not(target_os = "windows"))]
+    let seven_zip_path = temp_dir.join("7zr_spruce");
 
     // Write the embedded 7z executable to temp
     std::fs::write(&seven_zip_path, SEVEN_ZIP_EXE)
         .map_err(|e| format!("Failed to extract 7z tool: {}", e))?;
 
-    // Run 7zr.exe to extract the archive
-    // Command: 7zr.exe x archive.7z -oDestination -y
+    // On Unix, make the binary executable
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&seven_zip_path)
+            .map_err(|e| format!("Failed to get file permissions: {}", e))?
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&seven_zip_path, perms)
+            .map_err(|e| format!("Failed to set executable permission: {}", e))?;
+    }
+
+    // Run 7z to extract the archive
+    // Command: 7zr x archive.7z -oDestination -y
     let output_arg = format!("-o{}", dest_dir.display());
 
-    #[cfg(windows)]
+    #[cfg(target_os = "windows")]
     let result = Command::new(&seven_zip_path)
         .arg("x")                           // Extract with full paths
         .arg(archive_path)                  // Archive to extract
@@ -64,7 +88,7 @@ pub async fn extract_7z(
         .output()
         .await;
 
-    #[cfg(not(windows))]
+    #[cfg(not(target_os = "windows"))]
     let result = Command::new(&seven_zip_path)
         .arg("x")
         .arg(archive_path)

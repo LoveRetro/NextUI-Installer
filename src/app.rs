@@ -117,8 +117,8 @@ impl InstallerApp {
         self.state = AppState::FetchingRelease;
         let (repo_name, repo_url) = REPO_OPTIONS[self.selected_repo_idx];
         self.log(&format!(
-            "Starting installation to drive {}: using {}",
-            drive.letter, repo_name
+            "Starting installation to {} using {}",
+            drive.name, repo_name
         ));
 
         let repo_url = repo_url.to_string();
@@ -237,7 +237,7 @@ impl InstallerApp {
 
             // Step 3: Format drive
             let _ = state_tx_clone.send(AppState::Formatting);
-            log(&format!("Formatting drive {}:...", drive.letter));
+            log(&format!("Formatting {}...", drive.name));
             set_progress(0, 100, "Formatting drive...");
 
             let (fmt_tx, mut fmt_rx) = mpsc::unbounded_channel::<FormatProgress>();
@@ -249,6 +249,7 @@ impl InstallerApp {
                 while let Some(prog) = fmt_rx.recv().await {
                     let msg = match prog {
                         FormatProgress::Started => "Starting format...",
+                        FormatProgress::Unmounting => "Unmounting drive...",
                         FormatProgress::CleaningDisk => "Cleaning disk...",
                         FormatProgress::CreatingPartition => "Creating partition...",
                         FormatProgress::Formatting => "Formatting to FAT32...",
@@ -267,7 +268,7 @@ impl InstallerApp {
                 }
             });
 
-            if let Err(e) = format_drive_fat32(drive.letter, &volume_label, fmt_tx).await {
+            if let Err(e) = format_drive_fat32(&drive.device_path, &volume_label, fmt_tx).await {
                 log(&format!("Format error: {}", e));
                 let _ = state_tx_clone.send(AppState::Error);
                 return;
@@ -276,7 +277,17 @@ impl InstallerApp {
             let _ = fmt_handle.await;
             log("Format complete");
 
-            let dest_path = PathBuf::from(format!("{}:\\", drive.letter));
+            // Get the destination path for extraction (platform-specific)
+            let dest_path = match get_mount_path_after_format(&drive, &volume_label).await {
+                Ok(path) => path,
+                Err(e) => {
+                    log(&format!("Error getting mount path: {}", e));
+                    let _ = state_tx_clone.send(AppState::Error);
+                    return;
+                }
+            };
+
+            log(&format!("Destination: {}", dest_path.display()));
 
             // Create a log file on the SD card for debugging
             let log_file_path = dest_path.join("install_log.txt");
@@ -386,6 +397,72 @@ impl InstallerApp {
     }
 }
 
+/// Get the mount path after formatting, handling platform differences
+#[cfg(target_os = "windows")]
+async fn get_mount_path_after_format(drive: &DriveInfo, _volume_label: &str) -> Result<PathBuf, String> {
+    // On Windows, the drive letter remains the same after formatting
+    // The mount_path should be set (e.g., "E:\")
+    drive.mount_path.clone().ok_or_else(|| {
+        format!("No mount path available for drive {}", drive.name)
+    })
+}
+
+#[cfg(target_os = "macos")]
+async fn get_mount_path_after_format(_drive: &DriveInfo, volume_label: &str) -> Result<PathBuf, String> {
+    // macOS automatically mounts at /Volumes/LABEL after diskutil eraseDisk
+    // Wait a moment for the mount to complete
+    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+
+    let mount_path = PathBuf::from(format!("/Volumes/{}", volume_label));
+
+    // Wait for the mount point to appear (up to 10 seconds)
+    for _ in 0..20 {
+        if mount_path.exists() {
+            return Ok(mount_path);
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    }
+
+    Err(format!("Mount point {} did not appear after formatting", mount_path.display()))
+}
+
+#[cfg(target_os = "linux")]
+async fn get_mount_path_after_format(drive: &DriveInfo, volume_label: &str) -> Result<PathBuf, String> {
+    use tokio::process::Command;
+
+    // Determine the partition path
+    let partition_path = if drive.device_path.contains("mmcblk") || drive.device_path.contains("nvme") {
+        format!("{}p1", drive.device_path)
+    } else {
+        format!("{}1", drive.device_path)
+    };
+
+    // Create a mount point
+    let mount_point = PathBuf::from(format!("/tmp/spruce_installer_{}", volume_label));
+
+    // Create the mount directory if it doesn't exist
+    let _ = std::fs::create_dir_all(&mount_point);
+
+    // Mount the partition
+    let output = Command::new("sudo")
+        .args(["mount", &partition_path, mount_point.to_str().unwrap()])
+        .output()
+        .await
+        .map_err(|e| format!("Failed to mount partition: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("Failed to mount partition: {}", stderr));
+    }
+
+    Ok(mount_point)
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+async fn get_mount_path_after_format(_drive: &DriveInfo, _volume_label: &str) -> Result<PathBuf, String> {
+    Err("Mounting not supported on this platform".to_string())
+}
+
 impl eframe::App for InstallerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Check for state updates from progress message
@@ -396,7 +473,11 @@ impl eframe::App for InstallerApp {
                 self.state = AppState::Error;
             } else if progress.message.contains("Downloading") {
                 self.state = AppState::Downloading;
-            } else if progress.message.contains("Formatting") || progress.message.contains("format")
+            } else if progress.message.contains("Formatting")
+                || progress.message.contains("format")
+                || progress.message.contains("Unmounting")
+                || progress.message.contains("Cleaning")
+                || progress.message.contains("partition")
             {
                 self.state = AppState::Formatting;
             } else if progress.message.contains("Extracting") || progress.message.contains("Extract")
@@ -529,10 +610,7 @@ impl eframe::App for InstallerApp {
                 );
 
                 ui.add_enabled_ui(!is_busy && self.selected_drive_idx.is_some(), |ui| {
-                    if ui
-                        .button(format!("Install {}", APP_NAME))
-                        .clicked()
-                    {
+                    if ui.button(format!("Install {}", APP_NAME)).clicked() {
                         self.state = AppState::AwaitingConfirmation;
                     }
                 });
