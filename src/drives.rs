@@ -377,6 +377,46 @@ fn get_macos_disk_info(disk_id: &str) -> Option<DriveInfo> {
     }
 }
 
+// ===========================================================================
+// macOS get_removable_drives
+// ===========================================================================
+
+#[cfg(target_os = "macos")]
+pub fn get_removable_drives() -> Vec<DriveInfo> {
+        use std::process::Command;
+
+        crate::debug::log_section("macOS Drive Detection");
+
+        let mut drives = Vec::new();
+
+        // List all external disks using diskutil
+        let output = Command::new("diskutil")
+                    .args(["list", "external"])
+                    .output();
+
+        let Ok(output) = output else {
+                    crate::debug::log("Failed to run diskutil list external");
+            return drives;
+};
+
+    let output_str = String::from_utf8_lossy(&output.stdout);
+
+    for line in output_str.lines() {
+                // Look for disk identifiers like "disk2", "disk3", etc.
+                if line.contains("/dev/disk") {
+                                if let Some(disk_id) = line.split_whitespace().last() {
+                                                    let disk_id = disk_id.trim_start_matches("/dev/");
+                                                    if let Some(drive_info) = get_macos_disk_info(disk_id) {
+                                                                            drives.push(drive_info);
+                                                    }
+                                }
+                }
+    }
+
+    crate::debug::log(&format!("Total removable drives found: {}", drives.len()));
+    drives
+        }
+
 // =============================================================================
 // Fallback for other platforms
 // =============================================================================
