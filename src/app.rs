@@ -395,8 +395,14 @@ impl InstallerApp {
             write_card_log("Format complete, starting extraction...");
 
             // Step 4: Extract to temp folder on local PC
+            // On Linux, use cache dir (~/.cache) instead of /tmp to avoid tmpfs space issues
+            #[cfg(target_os = "linux")]
+            let extract_base_dir = dirs::cache_dir().unwrap_or_else(|| temp_dir.clone());
+            #[cfg(not(target_os = "linux"))]
+            let extract_base_dir = temp_dir.clone();
+
             let _ = state_tx_clone.send(AppState::Extracting);
-            let temp_extract_dir = temp_dir.join(format!("{}_extract", TEMP_PREFIX));
+            let temp_extract_dir = extract_base_dir.join(format!("{}_extract", TEMP_PREFIX));
             log("Extracting files to local temp folder...");
             crate::debug::log_section("Extracting Files");
             crate::debug::log(&format!("Temp extract dir: {:?}", temp_extract_dir));

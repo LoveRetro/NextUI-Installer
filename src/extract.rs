@@ -127,6 +127,9 @@ pub async fn extract_7z(
     let stdout = child.stdout.take()
         .ok_or_else(|| "Failed to capture 7z stdout".to_string())?;
 
+    // Take stderr for error capture
+    let stderr = child.stderr.take();
+
     let mut reader = BufReader::new(stdout);
     let mut last_percent: u8 = 0;
     let mut buffer = Vec::new();
@@ -181,7 +184,23 @@ pub async fn extract_7z(
         let _ = progress_tx.send(ExtractProgress::Completed);
         Ok(())
     } else {
-        let err_msg = format!("7z extraction failed with exit code: {:?}", status.code());
+        // Read stderr for error details
+        let stderr_output = if let Some(mut stderr) = stderr {
+            use tokio::io::AsyncReadExt;
+            let mut stderr_buf = Vec::new();
+            let _ = stderr.read_to_end(&mut stderr_buf).await;
+            String::from_utf8_lossy(&stderr_buf).trim().to_string()
+        } else {
+            String::new()
+        };
+
+        let exit_code = status.code().map(|c| c.to_string()).unwrap_or_else(|| "unknown".to_string());
+        let err_msg = if stderr_output.is_empty() {
+            format!("7z extraction failed with exit code: {}", exit_code)
+        } else {
+            format!("7z extraction failed (code {}): {}", exit_code, stderr_output)
+        };
+
         crate::debug::log(&format!("ERROR: {}", err_msg));
         let _ = progress_tx.send(ExtractProgress::Error(err_msg.clone()));
         Err(err_msg)
