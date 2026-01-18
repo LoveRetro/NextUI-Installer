@@ -12,6 +12,28 @@ If you’d like to use this program for your own project, let us know—we can c
 > **Please do not remove the Spruce team from the authors section.**  
 > Instead, add your name alongside the existing credits.
 
+
+## macOS Users
+
+The installer is distributed as a `.zip` containing a self-contained `.app` bundle. No system installation is required.
+
+**Steps to run:**
+
+1. Download the ZIP file from the GitHub release.  
+2. Extract the ZIP — you will get the following bundle and files:
+
+    ```
+    SpruceOS Installer.app/
+    ├── Contents/
+    │   ├── MacOS/
+    │   │   └── spruceos-installer
+    │   ├── Info.plist
+    │   └── Resources/
+    │       └── AppIcon.icns
+    ```
+
+
+
 ---
 
 ## To-Do
