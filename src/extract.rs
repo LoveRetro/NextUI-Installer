@@ -67,14 +67,18 @@ pub async fn extract_7z(
 
     let _ = progress_tx.send(ExtractProgress::Extracting);
 
-    // Extract 7z binary to temp directory with platform-appropriate name
-    let temp_dir = std::env::temp_dir();
+    // Extract 7z binary to temp/cache directory with platform-appropriate name
+    // On Linux, use cache dir (~/.cache) instead of /tmp
+    #[cfg(target_os = "linux")]
+    let bin_dir = dirs::cache_dir().unwrap_or_else(std::env::temp_dir);
+    #[cfg(not(target_os = "linux"))]
+    let bin_dir = std::env::temp_dir();
 
     #[cfg(target_os = "windows")]
-    let seven_zip_path = temp_dir.join(format!("7zr_{}.exe", TEMP_PREFIX));
+    let seven_zip_path = bin_dir.join(format!("7zr_{}.exe", TEMP_PREFIX));
 
     #[cfg(not(target_os = "windows"))]
-    let seven_zip_path = temp_dir.join(format!("7zr_{}", TEMP_PREFIX));
+    let seven_zip_path = bin_dir.join(format!("7zr_{}", TEMP_PREFIX));
 
     // Write the embedded 7z executable to temp
     crate::debug::log(&format!("Extracting 7z binary to: {:?}", seven_zip_path));

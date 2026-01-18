@@ -660,8 +660,9 @@ async fn get_mount_path_after_format(drive: &DriveInfo, volume_label: &str) -> R
         format!("{}1", drive.device_path)
     };
 
-    // Create a mount point
-    let mount_point = PathBuf::from(format!("/tmp/{}_{}", TEMP_PREFIX, volume_label));
+    // Create a mount point in cache dir (~/.cache) instead of /tmp
+    let cache_dir = dirs::cache_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
+    let mount_point = cache_dir.join(format!("{}_{}", TEMP_PREFIX, volume_label));
 
     // Create the mount directory if it doesn't exist
     let _ = std::fs::create_dir_all(&mount_point);
@@ -1009,7 +1010,7 @@ impl eframe::App for InstallerApp {
 
                                 #[cfg(not(target_os = "windows"))]
                                 {
-                                    // OTHER PLATFORMS: Run synchronously
+                                    // Run synchronously
                                     match eject_drive(&drive) {
                                         Ok(()) => {
                                             self.log("SD card safely ejected. You may now remove it.");

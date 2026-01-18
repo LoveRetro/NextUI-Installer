@@ -118,7 +118,14 @@ pub fn eject_drive(drive: &DriveInfo) -> Result<(), String> {
 
 #[cfg(target_os = "linux")]
 pub fn eject_drive(drive: &DriveInfo) -> Result<(), String> {
+    use std::path::Path;
     use std::process::Command;
+
+    // Check if device still exists - if not, it's already ejected
+    if !Path::new(&drive.device_path).exists() {
+        crate::debug::log(&format!("Linux eject: device {} already removed", drive.device_path));
+        return Ok(());
+    }
 
     // With root privileges, use direct commands for fast ejection:
     // 1. sync - flush filesystem buffers
@@ -139,6 +146,12 @@ pub fn eject_drive(drive: &DriveInfo) -> Result<(), String> {
     // Also try unmounting the device path directly (catches all partitions)
     crate::debug::log(&format!("Linux eject: unmounting device {}...", drive.device_path));
     let _ = Command::new("umount").arg(&drive.device_path).output();
+
+    // Check again if device still exists after unmount
+    if !Path::new(&drive.device_path).exists() {
+        crate::debug::log("Linux eject: device removed after unmount");
+        return Ok(());
+    }
 
     // Eject the device
     crate::debug::log(&format!("Linux eject: ejecting {}...", drive.device_path));
