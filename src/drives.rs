@@ -259,8 +259,6 @@ fn get_macos_disk_info(disk_id: &str) -> Option<DriveInfo> {
     let mut is_removable = false;
     let mut is_ejectable = false;
     let mut is_internal = false;
-    let mut is_physical = false;
-    let mut is_virtual = false;
     let mut protocol = String::new();
     let mut media_type = String::new();
     let mut device_location = String::new();
@@ -269,10 +267,9 @@ fn get_macos_disk_info(disk_id: &str) -> Option<DriveInfo> {
         let line = line.trim();
 
         if line.starts_with("Disk Size:") || line.starts_with("Total Size:") {
-            // Parse size like "Disk Size:                 31.9 GB (31914983424 Bytes)..."
             if let Some(start) = line.find('(') {
                 if let Some(end) = line.find(" Bytes") {
-                    if let Ok(bytes) = line[start + 1..end].trim().parse::<u64>() {
+                    if let Ok(bytes) = line[start + 1..end].trim().replace(",", "").parse::<u64>() {
                         size_bytes = bytes;
                     }
                 }
@@ -282,48 +279,45 @@ fn get_macos_disk_info(disk_id: &str) -> Option<DriveInfo> {
             if label == "Not applicable (no file system)" {
                 label = String::new();
             }
-        } else if line.starts_with("Mount Point:") {
-            let mp = line.replace("Mount Point:", "").trim().to_string();
+        } else if line.starts_with("Device / Media Name:") {
+            // Fallback label if Volume Name is empty
+            if label.is_empty() {
+                label = line.replace("Device / Media Name:", "").trim().to_string();
+            }
+        } else if line.starts_with("Mount Point:") || line.starts_with("Mounted:") {
+            let mp = line.replace("Mount Point:", "").replace("Mounted:", "").trim().to_string();
             if !mp.is_empty() && mp != "Not applicable (no file system)" {
                 mount_point = Some(PathBuf::from(mp));
             }
         } else if line.starts_with("Removable Media:") {
-            // Can be "Removable", "Yes", or "Fixed"/"No"
+            // Parse "Removable Media:     Removable" or "Removable Media:     Yes"
             let value = line.replace("Removable Media:", "").trim().to_lowercase();
-            is_removable = value.contains("removable") || value.contains("yes");
+            is_removable = value.contains("removable") || value == "yes";
         } else if line.starts_with("Ejectable:") {
-            // Ejectable media (like SD cards in built-in readers)
             let value = line.replace("Ejectable:", "").trim().to_lowercase();
-            is_ejectable = value.contains("yes");
+            is_ejectable = value == "yes";
         } else if line.starts_with("Protocol:") {
             protocol = line.replace("Protocol:", "").trim().to_string();
         } else if line.starts_with("Device Location:") {
             device_location = line.replace("Device Location:", "").trim().to_string();
-            // Check if it's internal
-            if device_location.to_lowercase().contains("internal") {
-                is_internal = true;
-            }
-        } else if line.starts_with("Virtual:") {
-            // Physical (non-virtual) disks
-            let value = line.replace("Virtual:", "").trim().to_lowercase();
-            is_virtual = value.contains("yes");
-            if value.contains("no") {
-                is_physical = true;
-            }
+            is_internal = device_location.to_lowercase().contains("internal");
         } else if line.starts_with("Media Type:") {
             media_type = line.replace("Media Type:", "").trim().to_string();
         }
     }
 
-    // Enhanced protocol detection - USB and SD card protocols indicate removable media
+    // Enhanced detection
     let proto_lower = protocol.to_lowercase();
-    if proto_lower.contains("usb") || proto_lower.contains("secure digital") || proto_lower.contains("sd") {
-        is_removable = true;
-    }
-
-    // Enhanced media type detection - SD cards often show as "SD Card" or similar
     let mt_lower = media_type.to_lowercase();
-    if mt_lower.contains("sd") || mt_lower.contains("card") {
+    let loc_lower = device_location.to_lowercase();
+
+    // Check various removable indicators
+    let is_sd_card = proto_lower.contains("secure digital") || proto_lower.contains("sd");
+    let is_usb = proto_lower.contains("usb") || loc_lower.contains("usb");
+    let is_external = loc_lower.contains("external");
+    
+    // SD cards and USB are always removable
+    if is_sd_card || is_usb {
         is_removable = true;
     }
 
@@ -336,39 +330,29 @@ fn get_macos_disk_info(disk_id: &str) -> Option<DriveInfo> {
     crate::debug::log(&format!("  is_removable: {}", is_removable));
     crate::debug::log(&format!("  is_ejectable: {}", is_ejectable));
     crate::debug::log(&format!("  is_internal: {}", is_internal));
-    crate::debug::log(&format!("  is_physical: {}", is_physical));
-    crate::debug::log(&format!("  is_virtual: {}", is_virtual));
+    crate::debug::log(&format!("  is_sd_card: {}", is_sd_card));
+    crate::debug::log(&format!("  is_usb: {}", is_usb));
+    crate::debug::log(&format!("  is_external: {}", is_external));
 
-    // A disk is considered usable if:
-    // 1. It's explicitly removable, OR
-    // 2. It's ejectable (like SD cards in built-in readers), OR
-    // 3. It has USB protocol (even if marked as internal), OR
-    // 4. It's physical, not virtual, and not the boot disk
-    let is_usable = is_removable || is_ejectable || proto_lower.contains("usb");
+    // A disk is usable if it's removable, ejectable, SD card, USB, or external
+    let is_usable = is_removable || is_ejectable || is_sd_card || is_usb || is_external;
 
     crate::debug::log(&format!("  is_usable: {}", is_usable));
 
-    // Skip virtual disks (disk images, synthesized disks like disk3)
-    if is_virtual {
-        crate::debug::log("  REJECTED: virtual disk");
+    // Skip synthesized disks
+    if loc_lower.contains("synthesized") {
+        crate::debug::log("  REJECTED: synthesized disk");
         return None;
     }
 
-    // Skip if it's internal AND doesn't have removable indicators
-    // This allows USB drives that might be incorrectly marked as internal
-    if is_internal && !is_removable && !is_ejectable && !proto_lower.contains("usb") {
-        crate::debug::log("  REJECTED: internal and not removable/ejectable/usb");
-        return None;
-    }
-
-    // Only return if it's usable and has a size
+    // Accept if usable and has size
     if is_usable && size_bytes > 0 {
         crate::debug::log("  ACCEPTED");
         Some(DriveInfo {
             name: disk_id.to_string(),
             device_path: format!("/dev/{}", disk_id),
             mount_path: mount_point,
-            label,
+            label: if label.is_empty() { disk_id.to_string() } else { label },
             size_bytes,
         })
     } else {
@@ -383,39 +367,61 @@ fn get_macos_disk_info(disk_id: &str) -> Option<DriveInfo> {
 
 #[cfg(target_os = "macos")]
 pub fn get_removable_drives() -> Vec<DriveInfo> {
-        use std::process::Command;
+    use std::process::Command;
+    use std::collections::HashSet;
 
-        crate::debug::log_section("macOS Drive Detection");
+    crate::debug::log_section("macOS Drive Detection");
 
-        let mut drives = Vec::new();
+    let mut drives = Vec::new();
+    let mut disk_ids: HashSet<String> = HashSet::new();
 
-        // List all external disks using diskutil
-        let output = Command::new("diskutil")
-                    .args(["list", "external"])
-                    .output();
-
-        let Ok(output) = output else {
-                    crate::debug::log("Failed to run diskutil list external");
-            return drives;
-};
-
-    let output_str = String::from_utf8_lossy(&output.stdout);
-
-    for line in output_str.lines() {
-                // Look for disk identifiers like "disk2", "disk3", etc.
-                if line.contains("/dev/disk") {
-                                if let Some(disk_id) = line.split_whitespace().last() {
-                                                    let disk_id = disk_id.trim_start_matches("/dev/");
-                                                    if let Some(drive_info) = get_macos_disk_info(disk_id) {
-                                                                            drives.push(drive_info);
-                                                    }
-                                }
-                }
+    if let Ok(output) = Command::new("diskutil")
+        .args(["list", "-plist"])
+        .output()
+    {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            parse_diskutil_plist(&stdout, &mut disk_ids);
+            crate::debug::log(&format!("Found disk IDs: {:?}", disk_ids));
+        } else {
+            crate::debug::log("diskutil list -plist failed");
+        }
+    } else {
+        crate::debug::log("Failed to run diskutil");
     }
 
-    crate::debug::log(&format!("Total removable drives found: {}", drives.len()));
-    drives
+    for disk_id in &disk_ids {
+        crate::debug::log(&format!("\nChecking disk: {}", disk_id));
+        if let Some(drive_info) = get_macos_disk_info(disk_id) {
+            crate::debug::log(&format!(">>> ACCEPTED: {} - {} ({} bytes)",
+                drive_info.name, drive_info.label, drive_info.size_bytes));
+            drives.push(drive_info);
         }
+    }
+
+    crate::debug::log(&format!("\nTotal removable drives found: {}", drives.len()));
+    drives
+}
+
+#[cfg(target_os = "macos")]
+fn parse_diskutil_plist(stdout: &str, disk_ids: &mut std::collections::HashSet<String>) {
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.starts_with("<string>disk") {
+            if let Some(start) = line.find("disk") {
+                if let Some(end) = line.find("</string>") {
+                    let disk_id = &line[start..end];
+                    if !disk_id.contains('s') || !disk_id.chars().last().unwrap_or('x').is_ascii_digit() {
+                        let after_disk = &disk_id[4..];
+                        if after_disk.chars().all(|c| c.is_ascii_digit()) && !after_disk.is_empty() {
+                            disk_ids.insert(disk_id.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 // =============================================================================
 // Fallback for other platforms
