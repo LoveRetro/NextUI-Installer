@@ -50,38 +50,11 @@ jobs:
         with:
           targets: aarch64-unknown-linux-gnu
 
-      - name: Install cross-compilation dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-
-          # Add arm64 architecture
-          sudo dpkg --add-architecture arm64
-
-          # Create a new sources file for arm64 that only uses ports.ubuntu.com
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $(lsb_release -cs) main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/arm64.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $(lsb_release -cs)-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $(lsb_release -cs)-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64.list
-
-          # Restrict main sources.list to amd64 only (only lines without existing arch specification)
-          sudo sed -i 's/^deb http/deb [arch=amd64] http/' /etc/apt/sources.list
-
-          sudo apt-get update
-          sudo apt-get install -y libxcb-render0-dev:arm64 libxcb-shape0-dev:arm64 libxcb-xfixes0-dev:arm64 libxkbcommon-dev:arm64 libssl-dev:arm64 libgtk-3-dev:arm64
-
-      - name: Configure cross-compilation
-        run: |
-          mkdir -p .cargo
-          cat >> .cargo/config.toml << EOF
-          [target.aarch64-unknown-linux-gnu]
-          linker = "aarch64-linux-gnu-gcc"
-          EOF
-          echo "PKG_CONFIG_SYSROOT_DIR=/usr/aarch64-linux-gnu" >> $GITHUB_ENV
-          echo "PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig" >> $GITHUB_ENV
-          echo "PKG_CONFIG_ALLOW_CROSS=1" >> $GITHUB_ENV
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
 
       - name: Build
-        run: cargo build --release --target aarch64-unknown-linux-gnu --features icon
+        run: cross build --release --target aarch64-unknown-linux-gnu --features icon
 
       - name: Rename binary
         run: |
