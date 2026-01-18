@@ -228,7 +228,12 @@ impl InstallerApp {
             log("Downloading release...");
             crate::debug::log_section("Downloading Release");
 
+            // On Linux, use cache dir (~/.cache) instead of /tmp to avoid tmpfs space issues
+            #[cfg(target_os = "linux")]
+            let temp_dir = dirs::cache_dir().unwrap_or_else(std::env::temp_dir);
+            #[cfg(not(target_os = "linux"))]
             let temp_dir = std::env::temp_dir();
+
             let download_path = temp_dir.join(&asset.name);
             crate::debug::log(&format!("Download path: {:?}", download_path));
 
