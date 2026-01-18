@@ -1,4 +1,4 @@
-name: Build MacOS
+name: Build macOS
 
 on:
   workflow_dispatch:
@@ -8,30 +8,7 @@ env:
 
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact: spruceos-installer-windows.exe
-            binary: spruceos-installer.exe
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            artifact: spruceos-installer-linux-x64
-            binary: spruceos-installer
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            artifact: spruceos-installer-linux-arm64
-            binary: spruceos-installer
-            cross: true
-          - os: macos-latest
-            target: aarch64-apple-darwin,x86_64-apple-darwin
-            artifact: spruceos-installer-macos
-            binary: spruceos-installer
-            macos_cross: true
-
-    runs-on: ${{ matrix.os }}
+    runs-on: macos-latest
 
     steps:
       - name: Checkout
@@ -40,46 +17,15 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
-      - name: Install Linux dependencies (native x64)
-        if: matrix.os == 'ubuntu-latest' && !matrix.cross
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libgtk-3-dev
+      - name: Build ARM64 (Apple Silicon)
+        run: cargo build --release --target aarch64-apple-darwin --features icon
 
-      - name: Install cross for ARM64 cross-compilation
-        if: matrix.cross
-        run: |
-          cargo install cross --git https://github.com/cross-rs/cross
-
-      - name: Build
-        if: ${{ !matrix.macos_cross && !matrix.cross }}
-        run: cargo build --release --target ${{ matrix.target }} --features icon
-
-      - name: Build (cross-compile)
-        if: ${{ matrix.cross }}
-        run: cross build --release --target ${{ matrix.target }} --features icon
-
-      - name: Build macOS (both architectures)
-        if: ${{ matrix.macos_cross }}
-        run: |
-          cargo build --release --target aarch64-apple-darwin --features icon
-          cargo build --release --target x86_64-apple-darwin --features icon
-
-      - name: Rename binary
-        if: ${{ !matrix.macos_cross }}
-        shell: bash
-        run: |
-          if [ "${{ matrix.os }}" == "windows-latest" ]; then
-            cp "target/${{ matrix.target }}/release/${{ matrix.binary }}" "${{ matrix.artifact }}"
-          else
-            cp "target/${{ matrix.target }}/release/${{ matrix.binary }}" "${{ matrix.artifact }}"
-            chmod +x "${{ matrix.artifact }}"
-          fi
+      - name: Build x64 (Intel)
+        run: cargo build --release --target x86_64-apple-darwin --features icon
 
       - name: Create macOS Icon
-        if: ${{ matrix.macos_cross }}
         run: |
           # Create iconset directory
           mkdir -p AppIcon.iconset
@@ -99,8 +45,7 @@ jobs:
           # Convert iconset to icns
           iconutil -c icns AppIcon.iconset -o AppIcon.icns
 
-      - name: Create macOS ARM64 App Bundle
-        if: ${{ matrix.macos_cross }}
+      - name: Create ARM64 App Bundle
         run: |
           # Create .app bundle structure (no spaces in name)
           mkdir -p "SpruceOSInstaller.app/Contents/MacOS"
@@ -138,8 +83,7 @@ jobs:
           rm -rf "SpruceOSInstaller.app"
           rm launch-installer.command
 
-      - name: Create macOS x64 App Bundle
-        if: ${{ matrix.macos_cross }}
+      - name: Create x64 App Bundle
         run: |
           # Create .app bundle structure (no spaces in name)
           mkdir -p "SpruceOSInstaller.app/Contents/MacOS"
@@ -173,22 +117,13 @@ jobs:
           # Create zip for distribution with both app and launcher
           zip -r "SpruceOS-Installer-macOS-x64.zip" "SpruceOSInstaller.app" "launch-installer.command"
 
-      - name: Upload artifact
-        if: ${{ !matrix.macos_cross }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}
-
-      - name: Upload macOS ARM64 artifact
-        if: ${{ matrix.macos_cross }}
+      - name: Upload ARM64 artifact
         uses: actions/upload-artifact@v4
         with:
           name: SpruceOS-Installer-macOS-arm64
           path: SpruceOS-Installer-macOS-arm64.zip
 
-      - name: Upload macOS x64 artifact
-        if: ${{ matrix.macos_cross }}
+      - name: Upload x64 artifact
         uses: actions/upload-artifact@v4
         with:
           name: SpruceOS-Installer-macOS-x64
@@ -206,7 +141,7 @@ jobs:
         with:
           path: artifacts
 
-      - name: Create Beta Release
+      - name: Upload to Beta Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: beta-${{ github.ref_name }}
@@ -217,9 +152,6 @@ jobs:
             **Warning:** This is a pre-release build and may contain bugs.
 
             ## Downloads
-            - **Windows:** `spruceos-installer-windows.exe`
-            - **Linux (x64):** `spruceos-installer-linux-x64`
-            - **Linux (ARM64):** `spruceos-installer-linux-arm64` (Raspberry Pi, etc.)
             - **macOS (Apple Silicon):** `SpruceOS-Installer-macOS-arm64.zip`
             - **macOS (Intel):** `SpruceOS-Installer-macOS-x64.zip`
 
