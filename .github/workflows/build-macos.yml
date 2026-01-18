@@ -1,4 +1,4 @@
-name: Build MacOS
+name: Build
 
 on:
   workflow_dispatch:
@@ -118,17 +118,17 @@ jobs:
           xattr -cr "SpruceOSInstaller.app"
           
           # Create launcher script
-          cat > launch-installer.command << 'EOF'
-#!/bin/bash
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-APP_PATH="$SCRIPT_DIR/SpruceOSInstaller.app"
-echo "SpruceOS Installer Launcher"
-echo "============================"
-echo "Removing quarantine attribute..."
-xattr -d com.apple.quarantine "$APP_PATH" 2>/dev/null
-echo "Launching SpruceOS Installer..."
-open "$APP_PATH"
-EOF
+          cat > launch-installer.command << 'LAUNCHER_EOF'
+          #!/bin/bash
+          SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+          APP_PATH="$SCRIPT_DIR/SpruceOSInstaller.app"
+          echo "SpruceOS Installer Launcher"
+          echo "============================"
+          echo "Removing quarantine attribute..."
+          xattr -d com.apple.quarantine "$APP_PATH" 2>/dev/null
+          echo "Launching SpruceOS Installer..."
+          open "$APP_PATH"
+          LAUNCHER_EOF
           chmod +x launch-installer.command
           
           # Create zip for distribution with both app and launcher
@@ -157,17 +157,17 @@ EOF
           xattr -cr "SpruceOSInstaller.app"
           
           # Create launcher script
-          cat > launch-installer.command << 'EOF'
-#!/bin/bash
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-APP_PATH="$SCRIPT_DIR/SpruceOSInstaller.app"
-echo "SpruceOS Installer Launcher"
-echo "============================"
-echo "Removing quarantine attribute..."
-xattr -d com.apple.quarantine "$APP_PATH" 2>/dev/null
-echo "Launching SpruceOS Installer..."
-open "$APP_PATH"
-EOF
+          cat > launch-installer.command << 'LAUNCHER_EOF'
+          #!/bin/bash
+          SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+          APP_PATH="$SCRIPT_DIR/SpruceOSInstaller.app"
+          echo "SpruceOS Installer Launcher"
+          echo "============================"
+          echo "Removing quarantine attribute..."
+          xattr -d com.apple.quarantine "$APP_PATH" 2>/dev/null
+          echo "Launching SpruceOS Installer..."
+          open "$APP_PATH"
+          LAUNCHER_EOF
           chmod +x launch-installer.command
           
           # Create zip for distribution with both app and launcher
