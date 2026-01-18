@@ -1,4 +1,4 @@
-name: Build macOS
+name: Build
 
 on:
   workflow_dispatch:
@@ -8,7 +8,30 @@ env:
 
 jobs:
   build:
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: spruceos-installer-windows.exe
+            binary: spruceos-installer.exe
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: spruceos-installer-linux-x64
+            binary: spruceos-installer
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            artifact: spruceos-installer-linux-arm64
+            binary: spruceos-installer
+            cross: true
+          - os: macos-latest
+            target: aarch64-apple-darwin,x86_64-apple-darwin
+            artifact: spruceos-installer-macos
+            binary: spruceos-installer
+            macos_cross: true
+
+    runs-on: ${{ matrix.os }}
 
     steps:
       - name: Checkout
@@ -17,21 +40,51 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: ${{ matrix.target }}
 
-      - name: Build ARM64 (Apple Silicon)
-        run: cargo build --release --target aarch64-apple-darwin --features icon
+      - name: Install Linux dependencies (native x64)
+        if: matrix.os == 'ubuntu-latest' && !matrix.cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libgtk-3-dev
 
-      - name: Build x64 (Intel)
-        run: cargo build --release --target x86_64-apple-darwin --features icon
+      - name: Install cross for ARM64 cross-compilation
+        if: matrix.cross
+        run: |
+          cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build
+        if: ${{ !matrix.macos_cross && !matrix.cross }}
+        run: cargo build --release --target ${{ matrix.target }} --features icon
+
+      - name: Build (cross-compile)
+        if: ${{ matrix.cross }}
+        run: cross build --release --target ${{ matrix.target }} --features icon
+
+      - name: Build macOS (both architectures)
+        if: ${{ matrix.macos_cross }}
+        run: |
+          cargo build --release --target aarch64-apple-darwin --features icon
+          cargo build --release --target x86_64-apple-darwin --features icon
+
+      - name: Rename binary
+        if: ${{ !matrix.macos_cross }}
+        shell: bash
+        run: |
+          if [ "${{ matrix.os }}" == "windows-latest" ]; then
+            cp "target/${{ matrix.target }}/release/${{ matrix.binary }}" "${{ matrix.artifact }}"
+          else
+            cp "target/${{ matrix.target }}/release/${{ matrix.binary }}" "${{ matrix.artifact }}"
+            chmod +x "${{ matrix.artifact }}"
+          fi
 
       - name: Create macOS Icon
+        if: ${{ matrix.macos_cross }}
         run: |
           # Create iconset directory
           mkdir -p AppIcon.iconset
 
           # Convert PNG to various sizes required for macOS icon
-          # Using sips (built into macOS) to resize
           sips -z 16 16     "assets/Icons/icon.png" --out "AppIcon.iconset/icon_16x16.png"
           sips -z 32 32     "assets/Icons/icon.png" --out "AppIcon.iconset/icon_16x16@2x.png"
           sips -z 32 32     "assets/Icons/icon.png" --out "AppIcon.iconset/icon_32x32.png"
@@ -46,60 +99,96 @@ jobs:
           # Convert iconset to icns
           iconutil -c icns AppIcon.iconset -o AppIcon.icns
 
-      - name: Create ARM64 App Bundle
+      - name: Create macOS ARM64 App Bundle
+        if: ${{ matrix.macos_cross }}
         run: |
           # Create .app bundle structure (no spaces in name)
           mkdir -p "SpruceOSInstaller.app/Contents/MacOS"
           mkdir -p "SpruceOSInstaller.app/Contents/Resources"
-
+          
           # Copy binary
           cp "target/aarch64-apple-darwin/release/spruceos-installer" "SpruceOSInstaller.app/Contents/MacOS/"
           chmod +x "SpruceOSInstaller.app/Contents/MacOS/spruceos-installer"
-
-          # Copy Info.plist
+          
+          # Copy Info.plist and icon
           cp "assets/Mac/Info.plist" "SpruceOSInstaller.app/Contents/"
-
-          # Copy icon
           cp "AppIcon.icns" "SpruceOSInstaller.app/Contents/Resources/"
-
+          
           # Remove quarantine attribute to prevent macOS Gatekeeper issues
           xattr -cr "SpruceOSInstaller.app"
-
-          # Create zip for distribution
-          zip -r "SpruceOS-Installer-macOS-arm64.zip" "SpruceOSInstaller.app"
-
+          
+          # Create launcher script
+          cat > launch-installer.command << 'EOF'
+#!/bin/bash
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+APP_PATH="$SCRIPT_DIR/SpruceOSInstaller.app"
+echo "SpruceOS Installer Launcher"
+echo "============================"
+echo "Removing quarantine attribute..."
+xattr -d com.apple.quarantine "$APP_PATH" 2>/dev/null
+echo "Launching SpruceOS Installer..."
+open "$APP_PATH"
+EOF
+          chmod +x launch-installer.command
+          
+          # Create zip for distribution with both app and launcher
+          zip -r "SpruceOS-Installer-macOS-arm64.zip" "SpruceOSInstaller.app" "launch-installer.command"
+          
           # Clean up for next build
           rm -rf "SpruceOSInstaller.app"
+          rm launch-installer.command
 
-      - name: Create x64 App Bundle
+      - name: Create macOS x64 App Bundle
+        if: ${{ matrix.macos_cross }}
         run: |
           # Create .app bundle structure (no spaces in name)
           mkdir -p "SpruceOSInstaller.app/Contents/MacOS"
           mkdir -p "SpruceOSInstaller.app/Contents/Resources"
-
+          
           # Copy binary
           cp "target/x86_64-apple-darwin/release/spruceos-installer" "SpruceOSInstaller.app/Contents/MacOS/"
           chmod +x "SpruceOSInstaller.app/Contents/MacOS/spruceos-installer"
-
-          # Copy Info.plist
+          
+          # Copy Info.plist and icon
           cp "assets/Mac/Info.plist" "SpruceOSInstaller.app/Contents/"
-
-          # Copy icon
           cp "AppIcon.icns" "SpruceOSInstaller.app/Contents/Resources/"
-
+          
           # Remove quarantine attribute to prevent macOS Gatekeeper issues
           xattr -cr "SpruceOSInstaller.app"
+          
+          # Create launcher script
+          cat > launch-installer.command << 'EOF'
+#!/bin/bash
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+APP_PATH="$SCRIPT_DIR/SpruceOSInstaller.app"
+echo "SpruceOS Installer Launcher"
+echo "============================"
+echo "Removing quarantine attribute..."
+xattr -d com.apple.quarantine "$APP_PATH" 2>/dev/null
+echo "Launching SpruceOS Installer..."
+open "$APP_PATH"
+EOF
+          chmod +x launch-installer.command
+          
+          # Create zip for distribution with both app and launcher
+          zip -r "SpruceOS-Installer-macOS-x64.zip" "SpruceOSInstaller.app" "launch-installer.command"
 
-          # Create zip for distribution
-          zip -r "SpruceOS-Installer-macOS-x64.zip" "SpruceOSInstaller.app"
+      - name: Upload artifact
+        if: ${{ !matrix.macos_cross }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
 
-      - name: Upload ARM64 artifact
+      - name: Upload macOS ARM64 artifact
+        if: ${{ matrix.macos_cross }}
         uses: actions/upload-artifact@v4
         with:
           name: SpruceOS-Installer-macOS-arm64
           path: SpruceOS-Installer-macOS-arm64.zip
 
-      - name: Upload x64 artifact
+      - name: Upload macOS x64 artifact
+        if: ${{ matrix.macos_cross }}
         uses: actions/upload-artifact@v4
         with:
           name: SpruceOS-Installer-macOS-x64
@@ -117,7 +206,7 @@ jobs:
         with:
           path: artifacts
 
-      - name: Upload to Beta Release
+      - name: Create Beta Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: beta-${{ github.ref_name }}
@@ -127,10 +216,17 @@ jobs:
 
             **Warning:** This is a pre-release build and may contain bugs.
 
+            ## Downloads
+            - **Windows:** `spruceos-installer-windows.exe`
+            - **Linux (x64):** `spruceos-installer-linux-x64`
+            - **Linux (ARM64):** `spruceos-installer-linux-arm64` (Raspberry Pi, etc.)
+            - **macOS (Apple Silicon):** `SpruceOS-Installer-macOS-arm64.zip`
+            - **macOS (Intel):** `SpruceOS-Installer-macOS-x64.zip`
+
             **macOS Users:** 
             1. Download and extract the zip file
-            2. Double-click "SpruceOSInstaller.app" to run
-            3. If macOS blocks the app, right-click the app and select "Open", then click "Open" in the dialog
+            2. **Easy Method:** Double-click `launch-installer.command` to automatically remove quarantine and launch the app
+            3. **Alternative:** Right-click "SpruceOSInstaller.app" and select "Open", then click "Open" in the dialog
             
             Note: This app is not code-signed. For production releases, consider signing the app with an Apple Developer certificate.
           prerelease: true
