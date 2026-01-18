@@ -120,31 +120,39 @@ pub fn eject_drive(drive: &DriveInfo) -> Result<(), String> {
 pub fn eject_drive(drive: &DriveInfo) -> Result<(), String> {
     use std::process::Command;
 
-    // udisksctl (called below) handles unmounting partitions before powering off the device.
-    // The explicit `sudo umount` loop is removed as the application now runs with elevated privileges,
-    // and udisksctl is the preferred method for ejecting.
+    // With root privileges, use direct commands for fast ejection:
+    // 1. sync - flush filesystem buffers
+    // 2. umount - unmount the partition
+    // 3. eject - eject the device
 
-    // Try udisksctl first (more modern, handles power-off)
-    let output = Command::new("udisksctl")
-        .args(["power-off", "-b", &drive.device_path])
-        .output();
+    crate::debug::log("Linux eject: syncing filesystems...");
+    let _ = Command::new("sync").output();
 
-    if let Ok(output) = output {
-        if output.status.success() {
-            return Ok(());
+    // Unmount the mount path if available
+    if let Some(mount_path) = &drive.mount_path {
+        if let Some(path_str) = mount_path.to_str() {
+            crate::debug::log(&format!("Linux eject: unmounting {}...", path_str));
+            let _ = Command::new("umount").arg(path_str).output();
         }
     }
 
-    // Fall back to eject command
+    // Also try unmounting the device path directly (catches all partitions)
+    crate::debug::log(&format!("Linux eject: unmounting device {}...", drive.device_path));
+    let _ = Command::new("umount").arg(&drive.device_path).output();
+
+    // Eject the device
+    crate::debug::log(&format!("Linux eject: ejecting {}...", drive.device_path));
     let output = Command::new("eject")
         .arg(&drive.device_path)
         .output()
         .map_err(|e| format!("Failed to run eject: {}", e))?;
 
     if output.status.success() {
+        crate::debug::log("Linux eject: success");
         Ok(())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
+        crate::debug::log(&format!("Linux eject failed: {}", stderr.trim()));
         Err(format!("Eject failed: {}", stderr.trim()))
     }
 }
