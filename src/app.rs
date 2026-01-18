@@ -575,7 +575,8 @@ impl eframe::App for InstallerApp {
                 .fill(COLOR_BG_DARK)
                 .stroke(egui::Stroke::new(1.0, COLOR_ACCENT_DIM));
 
-            egui::Window::new("Confirm Installation")
+            let selected_repo_name = REPO_OPTIONS[self.selected_repo_idx].0;
+            egui::Window::new(format!("Confirm {} Installation", selected_repo_name))
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
@@ -607,7 +608,7 @@ impl eframe::App for InstallerApp {
                             ui.add_space(20.0);
 
                             if ui
-                                .add(egui::Button::new("Yes, Install").fill(COLOR_ERROR))
+                                .add(egui::Button::new(format!("Yes, Install {}", selected_repo_name)).fill(COLOR_ERROR))
                                 .clicked()
                             {
                                 self.start_installation(ctx.clone());
@@ -687,7 +688,8 @@ impl eframe::App for InstallerApp {
                 );
 
                 ui.add_enabled_ui(!is_busy && self.selected_drive_idx.is_some(), |ui| {
-                    if ui.button(format!("Install {}", APP_NAME)).clicked() {
+                    let selected_repo_name = REPO_OPTIONS[self.selected_repo_idx].0;
+                    if ui.button(format!("Install {}", selected_repo_name)).clicked() {
                         self.state = AppState::AwaitingConfirmation;
                     }
                 });
@@ -764,7 +766,8 @@ impl eframe::App for InstallerApp {
                 // Status
                 match self.state {
                     AppState::Complete => {
-                        ui.colored_label(COLOR_SUCCESS, "Installation complete!");
+                        let selected_repo_name = REPO_OPTIONS[self.selected_repo_idx].0;
+                        ui.colored_label(COLOR_SUCCESS, format!("{} installation complete!", selected_repo_name));
                         ui.add_space(5.0);
                         if ui.button("Safely Eject SD Card").clicked() {
                             if let Some(drive) = self.installed_drive.clone() {
@@ -810,7 +813,8 @@ impl eframe::App for InstallerApp {
                         }
                     }
                     AppState::Ejecting => {
-                        ui.colored_label(COLOR_SUCCESS, "Installation complete!");
+                        let selected_repo_name = REPO_OPTIONS[self.selected_repo_idx].0;
+                        ui.colored_label(COLOR_SUCCESS, format!("{} installation complete!", selected_repo_name));
                         ui.add_space(5.0);
                         ui.horizontal(|ui| {
                             ui.spinner();
@@ -821,7 +825,8 @@ impl eframe::App for InstallerApp {
                         ui.colored_label(COLOR_SUCCESS, "SD card ejected! You may safely remove it.");
                     }
                     AppState::Error => {
-                        ui.colored_label(COLOR_ERROR, "Installation failed. See log for details.");
+                        let selected_repo_name = REPO_OPTIONS[self.selected_repo_idx].0;
+                        ui.colored_label(COLOR_ERROR, format!("{} installation failed. See log for details.", selected_repo_name));
                     }
                     _ => {}
                 }
