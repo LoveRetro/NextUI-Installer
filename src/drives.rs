@@ -405,18 +405,27 @@ pub fn get_removable_drives() -> Vec<DriveInfo> {
 
 #[cfg(target_os = "macos")]
 fn parse_diskutil_plist(stdout: &str, disk_ids: &mut std::collections::HashSet<String>) {
+    let mut in_whole_disks = false;
+    
     for line in stdout.lines() {
         let line = line.trim();
-        if line.starts_with("<string>disk") {
+        
+        if line.contains("<key>WholeDisks</key>") {
+            in_whole_disks = true;
+            continue;
+        }
+        
+        if in_whole_disks && (line.starts_with("<key>") || line == "</array>") {
+            if line.starts_with("<key>") {
+                in_whole_disks = false;
+            }
+        }
+        
+        if in_whole_disks && line.starts_with("<string>disk") {
             if let Some(start) = line.find("disk") {
                 if let Some(end) = line.find("</string>") {
                     let disk_id = &line[start..end];
-                    if !disk_id.contains('s') || !disk_id.chars().last().unwrap_or('x').is_ascii_digit() {
-                        let after_disk = &disk_id[4..];
-                        if after_disk.chars().all(|c| c.is_ascii_digit()) && !after_disk.is_empty() {
-                            disk_ids.insert(disk_id.to_string());
-                        }
-                    }
+                    disk_ids.insert(disk_id.to_string());
                 }
             }
         }
