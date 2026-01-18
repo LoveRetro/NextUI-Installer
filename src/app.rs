@@ -1007,33 +1007,9 @@ impl eframe::App for InstallerApp {
                                     });
                                 }
 
-                                #[cfg(target_os = "linux")]
+                                #[cfg(not(target_os = "windows"))]
                                 {
-                                    // Run in background task to avoid UI freeze
-                                    self.state = AppState::Ejecting;
-                                    self.log("Ejecting SD card...");
-
-                                    let progress = self.progress.clone();
-                                    let ctx_clone = ctx.clone();
-
-                                    self.runtime.spawn(async move {
-                                        let result = tokio::task::spawn_blocking(move || {
-                                            eject_drive(&drive)
-                                        }).await.unwrap();
-
-                                        if let Ok(mut progress) = progress.lock() {
-                                            match result {
-                                                Ok(()) => progress.message = "EJECT_SUCCESS".to_string(),
-                                                Err(e) => progress.message = format!("EJECT_ERROR: {}", e),
-                                            }
-                                        }
-                                        ctx_clone.request_repaint();
-                                    });
-                                }
-
-                                #[cfg(target_os = "macos")]
-                                {
-                                    // macOS: Run synchronously (maintained by other dev)
+                                    // OTHER PLATFORMS: Run synchronously
                                     match eject_drive(&drive) {
                                         Ok(()) => {
                                             self.log("SD card safely ejected. You may now remove it.");
