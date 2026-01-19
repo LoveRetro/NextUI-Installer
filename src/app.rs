@@ -223,82 +223,14 @@ impl InstallerApp {
             crate::debug::log(&format!("Release: {}", release.tag_name));
             crate::debug::log(&format!("Asset: {} ({} bytes)", asset.name, asset.size));
 
-            // Step 2: Download
-            let _ = state_tx_clone.send(AppState::Downloading);
-            log("Downloading release...");
-            crate::debug::log_section("Downloading Release");
-
+            // Define temp/cache directory for later use
             // On Linux, use cache dir (~/.cache) instead of /tmp to avoid tmpfs space issues
             #[cfg(target_os = "linux")]
             let temp_dir = dirs::cache_dir().unwrap_or_else(std::env::temp_dir);
             #[cfg(not(target_os = "linux"))]
             let temp_dir = std::env::temp_dir();
 
-            let download_path = temp_dir.join(&asset.name);
-            crate::debug::log(&format!("Download path: {:?}", download_path));
-
-            let (dl_tx, mut dl_rx) = mpsc::unbounded_channel::<DownloadProgress>();
-
-            let download_path_clone = download_path.clone();
-            let asset_clone = asset.clone();
-            let progress_clone = progress.clone();
-            let ctx_dl = ctx_clone.clone();
-
-            // Spawn download progress handler
-            let dl_handle = tokio::spawn(async move {
-                while let Some(prog) = dl_rx.recv().await {
-                    match prog {
-                        DownloadProgress::Started { total_bytes } => {
-                            if let Ok(mut p) = progress_clone.lock() {
-                                p.total = total_bytes;
-                                p.current = 0;
-                                p.message = "Downloading...".to_string();
-                            }
-                        }
-                        DownloadProgress::Progress { downloaded, total } => {
-                            if let Ok(mut p) = progress_clone.lock() {
-                                p.current = downloaded;
-                                p.total = total;
-                                let pct = (downloaded as f64 / total as f64 * 100.0) as u32;
-                                p.message = format!("Downloading... {}%", pct);
-                            }
-                        }
-                        DownloadProgress::Completed => {
-                            if let Ok(mut p) = progress_clone.lock() {
-                                p.message = "Download complete".to_string();
-                            }
-                        }
-                        DownloadProgress::Cancelled => {
-                            if let Ok(mut p) = progress_clone.lock() {
-                                p.message = "Download cancelled".to_string();
-                            }
-                        }
-                        DownloadProgress::Error(e) => {
-                            if let Ok(mut p) = progress_clone.lock() {
-                                p.message = format!("Download error: {}", e);
-                            }
-                        }
-                    }
-                    ctx_dl.request_repaint();
-                }
-            });
-
-            if let Err(e) = download_asset(&asset_clone, &download_path_clone, dl_tx, cancel_token_clone.clone()).await {
-                if e.contains("cancelled") {
-                    log("Download cancelled");
-                    let _ = state_tx_clone.send(AppState::Idle);
-                    return;
-                }
-                log(&format!("Download error: {}", e));
-                let _ = state_tx_clone.send(AppState::Error);
-                return;
-            }
-
-            let _ = dl_handle.await;
-            log("Download complete");
-            crate::debug::log("Download complete");
-
-            // Step 3: Format drive
+            // Step 2: Format drive (do this first so we fail fast if the card has issues)
             let _ = state_tx_clone.send(AppState::Formatting);
             log(&format!("Formatting {}...", drive.name));
             crate::debug::log_section("Formatting Drive");
@@ -397,7 +329,77 @@ impl InstallerApp {
                 }
             };
 
-            write_card_log("Format complete, starting extraction...");
+            write_card_log("Format complete, starting download...");
+
+            // Step 3: Download
+            let _ = state_tx_clone.send(AppState::Downloading);
+            log("Downloading release...");
+            crate::debug::log_section("Downloading Release");
+
+            let download_path = temp_dir.join(&asset.name);
+            crate::debug::log(&format!("Download path: {:?}", download_path));
+
+            let (dl_tx, mut dl_rx) = mpsc::unbounded_channel::<DownloadProgress>();
+
+            let download_path_clone = download_path.clone();
+            let asset_clone = asset.clone();
+            let progress_clone = progress.clone();
+            let ctx_dl = ctx_clone.clone();
+
+            // Spawn download progress handler
+            let dl_handle = tokio::spawn(async move {
+                while let Some(prog) = dl_rx.recv().await {
+                    match prog {
+                        DownloadProgress::Started { total_bytes } => {
+                            if let Ok(mut p) = progress_clone.lock() {
+                                p.total = total_bytes;
+                                p.current = 0;
+                                p.message = "Downloading...".to_string();
+                            }
+                        }
+                        DownloadProgress::Progress { downloaded, total } => {
+                            if let Ok(mut p) = progress_clone.lock() {
+                                p.current = downloaded;
+                                p.total = total;
+                                let pct = (downloaded as f64 / total as f64 * 100.0) as u32;
+                                p.message = format!("Downloading... {}%", pct);
+                            }
+                        }
+                        DownloadProgress::Completed => {
+                            if let Ok(mut p) = progress_clone.lock() {
+                                p.message = "Download complete".to_string();
+                            }
+                        }
+                        DownloadProgress::Cancelled => {
+                            if let Ok(mut p) = progress_clone.lock() {
+                                p.message = "Download cancelled".to_string();
+                            }
+                        }
+                        DownloadProgress::Error(e) => {
+                            if let Ok(mut p) = progress_clone.lock() {
+                                p.message = format!("Download error: {}", e);
+                            }
+                        }
+                    }
+                    ctx_dl.request_repaint();
+                }
+            });
+
+            if let Err(e) = download_asset(&asset_clone, &download_path_clone, dl_tx, cancel_token_clone.clone()).await {
+                if e.contains("cancelled") {
+                    log("Download cancelled");
+                    let _ = state_tx_clone.send(AppState::Idle);
+                    return;
+                }
+                log(&format!("Download error: {}", e));
+                let _ = state_tx_clone.send(AppState::Error);
+                return;
+            }
+
+            let _ = dl_handle.await;
+            log("Download complete");
+            crate::debug::log("Download complete");
+            write_card_log("Download complete, starting extraction...");
 
             // Step 4: Extract to temp folder on local PC
             // On Linux, use cache dir (~/.cache) instead of /tmp to avoid tmpfs space issues
