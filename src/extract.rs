@@ -67,36 +67,92 @@ pub async fn extract_7z(
 
     let _ = progress_tx.send(ExtractProgress::Extracting);
 
-    // Extract 7z binary to temp/cache directory with platform-appropriate name
-    // On Linux/macOS, use cache dir to avoid temp space issues
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    let bin_dir = dirs::cache_dir().unwrap_or_else(std::env::temp_dir);
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    let bin_dir = std::env::temp_dir();
+    // On macOS, try to use the bundled 7zz from the app bundle first
+    // This avoids Gatekeeper quarantine issues since the app is already unquarantined
+    #[cfg(target_os = "macos")]
+    let (seven_zip_path, is_bundled) = {
+        // Try to find 7zz in app bundle: Contents/Resources/7zz
+        let bundled_path = std::env::current_exe()
+            .ok()
+            .and_then(|exe| {
+                // exe is at: SpruceOSInstaller.app/Contents/MacOS/spruceos-installer
+                // We want: SpruceOSInstaller.app/Contents/Resources/7zz
+                exe.parent()  // Contents/MacOS
+                    .and_then(|p| p.parent())  // Contents
+                    .map(|contents| contents.join("Resources/7zz"))
+            });
 
-    #[cfg(target_os = "windows")]
-    let seven_zip_path = bin_dir.join(format!("7zr_{}.exe", TEMP_PREFIX));
+        if let Some(ref path) = bundled_path {
+            if path.exists() {
+                crate::debug::log(&format!("Using bundled 7zz from app bundle: {:?}", path));
+                (path.clone(), true)
+            } else {
+                crate::debug::log("Bundled 7zz not found, extracting to temp...");
+                // Fallback to temp extraction
+                let bin_dir = dirs::cache_dir().unwrap_or_else(std::env::temp_dir);
+                let temp_path = bin_dir.join(format!("7zr_{}", TEMP_PREFIX));
+                std::fs::write(&temp_path, SEVEN_ZIP_EXE)
+                    .map_err(|e| format!("Failed to extract 7z tool: {}", e))?;
+                use std::os::unix::fs::PermissionsExt;
+                let mut perms = std::fs::metadata(&temp_path)
+                    .map_err(|e| format!("Failed to get file permissions: {}", e))?
+                    .permissions();
+                perms.set_mode(0o755);
+                std::fs::set_permissions(&temp_path, perms)
+                    .map_err(|e| format!("Failed to set executable permission: {}", e))?;
+                crate::debug::log(&format!("Extracted 7z binary to: {:?}", temp_path));
+                (temp_path, false)
+            }
+        } else {
+            // Fallback to temp extraction
+            let bin_dir = dirs::cache_dir().unwrap_or_else(std::env::temp_dir);
+            let temp_path = bin_dir.join(format!("7zr_{}", TEMP_PREFIX));
+            std::fs::write(&temp_path, SEVEN_ZIP_EXE)
+                .map_err(|e| format!("Failed to extract 7z tool: {}", e))?;
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&temp_path)
+                .map_err(|e| format!("Failed to get file permissions: {}", e))?
+                .permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&temp_path, perms)
+                .map_err(|e| format!("Failed to set executable permission: {}", e))?;
+            crate::debug::log(&format!("Extracted 7z binary to: {:?}", temp_path));
+            (temp_path, false)
+        }
+    };
 
-    #[cfg(not(target_os = "windows"))]
-    let seven_zip_path = bin_dir.join(format!("7zr_{}", TEMP_PREFIX));
+    // On non-macOS platforms, extract 7z binary to temp/cache directory (always temp-extracted, never bundled)
+    #[cfg(not(target_os = "macos"))]
+    let (seven_zip_path, is_bundled) = {
+        #[cfg(target_os = "linux")]
+        let bin_dir = dirs::cache_dir().unwrap_or_else(std::env::temp_dir);
+        #[cfg(not(target_os = "linux"))]
+        let bin_dir = std::env::temp_dir();
 
-    // Write the embedded 7z executable to temp
-    crate::debug::log(&format!("Extracting 7z binary to: {:?}", seven_zip_path));
-    std::fs::write(&seven_zip_path, SEVEN_ZIP_EXE)
-        .map_err(|e| format!("Failed to extract 7z tool: {}", e))?;
-    crate::debug::log("7z binary extracted successfully");
+        #[cfg(target_os = "windows")]
+        let temp_path = bin_dir.join(format!("7zr_{}.exe", TEMP_PREFIX));
+        #[cfg(not(target_os = "windows"))]
+        let temp_path = bin_dir.join(format!("7zr_{}", TEMP_PREFIX));
 
-    // On Unix, make the binary executable
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&seven_zip_path)
-            .map_err(|e| format!("Failed to get file permissions: {}", e))?
-            .permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&seven_zip_path, perms)
-            .map_err(|e| format!("Failed to set executable permission: {}", e))?;
-    }
+        crate::debug::log(&format!("Extracting 7z binary to: {:?}", temp_path));
+        std::fs::write(&temp_path, SEVEN_ZIP_EXE)
+            .map_err(|e| format!("Failed to extract 7z tool: {}", e))?;
+        crate::debug::log("7z binary extracted successfully");
+
+        // On Unix (Linux), make the binary executable
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&temp_path)
+                .map_err(|e| format!("Failed to get file permissions: {}", e))?
+                .permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&temp_path, perms)
+                .map_err(|e| format!("Failed to set executable permission: {}", e))?;
+        }
+
+        (temp_path, false)
+    };
 
     // Run 7z to extract the archive with -bsp1 for progress output
     let output_arg = format!("-o{}", dest_dir.display());
@@ -144,7 +200,10 @@ pub async fn extract_7z(
             _ = cancel_token.cancelled() => {
                 crate::debug::log("Extraction cancelled by user");
                 let _ = child.kill().await;
-                let _ = std::fs::remove_file(&seven_zip_path);
+                // Only delete if it's a temp-extracted binary, not a bundled one
+                if !is_bundled {
+                    let _ = std::fs::remove_file(&seven_zip_path);
+                }
                 let _ = progress_tx.send(ExtractProgress::Cancelled);
                 return Err("Extraction cancelled".to_string());
             }
@@ -179,9 +238,13 @@ pub async fn extract_7z(
     let status = child.wait().await
         .map_err(|e| format!("Failed to wait for 7z: {}", e))?;
 
-    // Clean up the temp 7z executable
-    let _ = std::fs::remove_file(&seven_zip_path);
-    crate::debug::log("Cleaned up temp 7z binary");
+    // Clean up the temp 7z executable (only if not bundled)
+    if !is_bundled {
+        let _ = std::fs::remove_file(&seven_zip_path);
+        crate::debug::log("Cleaned up temp 7z binary");
+    } else {
+        crate::debug::log("Keeping bundled 7z binary (from app bundle)");
+    }
 
     if status.success() {
         crate::debug::log("7z extraction completed successfully");

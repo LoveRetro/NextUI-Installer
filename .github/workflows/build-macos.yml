@@ -78,10 +78,14 @@ jobs:
           # Copy universal binary
           cp spruceos-installer-universal "SpruceOSInstaller.app/Contents/MacOS/spruceos-installer"
           chmod +x "SpruceOSInstaller.app/Contents/MacOS/spruceos-installer"
-          
+
           # Copy Info.plist and icon
           cp "assets/Mac/Info.plist" "SpruceOSInstaller.app/Contents/"
           cp "AppIcon.icns" "SpruceOSInstaller.app/Contents/Resources/"
+
+          # Copy 7zz binary to Resources so it inherits app's unquarantine status
+          cp "assets/Mac/7zz" "SpruceOSInstaller.app/Contents/Resources/7zz"
+          chmod +x "SpruceOSInstaller.app/Contents/Resources/7zz"
           
           # Remove quarantine attribute to prevent macOS Gatekeeper issues
           xattr -cr "SpruceOSInstaller.app"
