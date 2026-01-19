@@ -172,7 +172,7 @@ pub async fn format_drive_fat32(
     crate::debug::log("Running diskpart to clean and partition disk...");
 
     // Create diskpart script for partitioning only (no format)
-    let script = create_partition_script(disk_number);
+    let script = create_partition_script(disk_number, drive_letter);
 
     // Run diskpart with the script
     let mut child = Command::new("diskpart")
@@ -274,20 +274,22 @@ fn get_drive_size_windows(drive_letter: char) -> Result<u64, String> {
 }
 
 #[cfg(target_os = "windows")]
-fn create_partition_script(disk_number: u32) -> String {
+fn create_partition_script(disk_number: u32, drive_letter: char) -> String {
     // Only partition, don't format - we'll use our custom formatter
-    // Use offline/online to force Windows to release its grip on the disk
+    // Remove the drive letter first to force Windows to release the volume,
+    // then clean and recreate. Assign the letter back at the end.
     format!(
-        r#"select disk {}
-offline disk
-online disk
+        r#"select volume {}
+remove letter={}
+select disk {}
 clean
 create partition primary
 select partition 1
 active
+assign letter={}
 exit
 "#,
-        disk_number
+        drive_letter, drive_letter, disk_number, drive_letter
     )
 }
 
