@@ -4,8 +4,8 @@
 // Edit this file to customize the installer for your OS project.
 //
 // QUICK START - To rebrand this installer, change these values:
-//   1. APP_NAME        - Your OS name (e.g., "SpruceOS", "Onion", "MinUI")
-//   2. VOLUME_LABEL    - SD card label, max 11 chars uppercase (e.g., "SPRUCE")
+//   1. APP_NAME        - Your OS name (e.g., "NextUI", "Onion", "MinUI")
+//   2. VOLUME_LABEL    - SD card label, max 11 chars uppercase (e.g., "NEXTUI")
 //   3. REPO_OPTIONS    - Your GitHub repositories
 //
 // ALSO UPDATE THESE EXTERNAL FILES:
@@ -23,12 +23,12 @@ use eframe::egui;
 // ----------------------------------------------------------------------------
 
 /// The name of your OS (displayed in window title and UI)
-/// Examples: "SpruceOS", "Onion", "MinUI"
-pub const APP_NAME: &str = "SpruceOS";
+/// Examples: "NextUI", "Onion", "MinUI"
+pub const APP_NAME: &str = "NextUI";
 
 /// Volume label applied to formatted SD cards (max 11 characters, uppercase)
 /// This is what the SD card will be named in file explorers
-pub const VOLUME_LABEL: &str = "SPRUCEOS";
+pub const VOLUME_LABEL: &str = "NEXTUI";
 
 // ----------------------------------------------------------------------------
 // INTERNAL IDENTIFIERS (auto-generated from APP_NAME)
@@ -50,9 +50,8 @@ pub const TEMP_PREFIX: &str = env!("CARGO_PKG_NAME");
 // Each entry is (Display Name, GitHub repo in "owner/repo" format)
 
 pub const REPO_OPTIONS: &[(&str, &str)] = &[
-    ("SpruceOS (Stable)", "spruceUI/spruceOS"),
-    ("SpruceOS (Nightlies)", "spruceUI/spruceOSNightlies"),
-    ("SprigUI (Stable)", "spruceUI/sprigUI"),
+    ("NextUI (stable)", "LoveRetro/NextUI"),
+    ("NextUI (nightlies)", "LoveRetro/NextUI-nightly"),
 ];
 
 /// Index of the default repository selection (0 = first option)
@@ -60,7 +59,7 @@ pub const DEFAULT_REPO_INDEX: usize = 0;
 
 /// File extension to look for in GitHub releases (e.g., ".7z", ".zip")
 /// The installer will download the first asset matching this extension
-pub const ASSET_EXTENSION: &str = ".7z";
+pub const ASSET_EXTENSION: &str = ".zip";
 
 // ----------------------------------------------------------------------------
 // THEME COLORS
