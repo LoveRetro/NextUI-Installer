@@ -64,6 +64,7 @@ pub struct InstallerApp {
 
     // Channel for background drive updates
     drive_rx: mpsc::UnboundedReceiver<Vec<DriveInfo>>,
+    drive_poll_tx: mpsc::UnboundedSender<bool>,
 
     // Theme editor
     theme_state: ThemeEditorState,
@@ -81,15 +82,23 @@ impl InstallerApp {
 
         // Start background drive polling
         let (tx, rx) = mpsc::unbounded_channel();
+        let (poll_tx, mut poll_rx) = mpsc::unbounded_channel::<bool>();
         let ctx_clone = cc.egui_ctx.clone();
         
         runtime.spawn(async move {
+            let mut enabled = true;
             loop {
-                let drives = tokio::task::spawn_blocking(get_removable_drives).await.unwrap_or_default();
-                if tx.send(drives).is_err() {
-                    break;
+                while let Ok(new_state) = poll_rx.try_recv() {
+                    enabled = new_state;
                 }
-                ctx_clone.request_repaint();
+
+                if enabled {
+                    let drives = tokio::task::spawn_blocking(get_removable_drives).await.unwrap_or_default();
+                    if tx.send(drives).is_err() {
+                        break;
+                    }
+                    ctx_clone.request_repaint();
+                }
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             }
         });
@@ -114,6 +123,7 @@ impl InstallerApp {
             installed_drive: None,
             cancel_token: None,
             drive_rx: rx,
+            drive_poll_tx: poll_tx,
             theme_state: ThemeEditorState::default(),
             show_theme_editor: false,
             show_log: false,
@@ -214,8 +224,12 @@ impl InstallerApp {
         // Channel for state updates
         let (state_tx, mut state_rx) = mpsc::unbounded_channel::<AppState>();
 
+        // Disable drive polling during installation
+        let _ = self.drive_poll_tx.send(false);
+
         // Clone values for the async block
         let state_tx_clone = state_tx.clone();
+        let drive_poll_tx_clone = self.drive_poll_tx.clone();
         let cancel_token_clone = cancel_token.clone();
 
         // Spawn the installation task
@@ -224,6 +238,8 @@ impl InstallerApp {
                 if let Ok(mut logs) = log_messages.lock() {
                     logs.push(msg.to_string());
                 }
+                // Also log to debug file/console
+                crate::debug::log(msg);
                 ctx_clone.request_repaint();
             };
 
@@ -248,6 +264,7 @@ impl InstallerApp {
                     log(&format!("Error: {}", e));
                     crate::debug::log(&format!("ERROR fetching release: {}", e));
                     let _ = state_tx_clone.send(AppState::Error);
+                    let _ = drive_poll_tx_clone.send(true);
                     return;
                 }
             };
@@ -258,6 +275,7 @@ impl InstallerApp {
                     log(&format!("Error: No {} file found in release", ASSET_EXTENSION));
                     crate::debug::log(&format!("ERROR: No {} asset found in release", ASSET_EXTENSION));
                     let _ = state_tx_clone.send(AppState::Error);
+                    let _ = drive_poll_tx_clone.send(true);
                     return;
                 }
             };
@@ -333,10 +351,12 @@ impl InstallerApp {
                 if e.contains("cancelled") {
                     log("Format cancelled");
                     let _ = state_tx_clone.send(AppState::Idle);
+                    let _ = drive_poll_tx_clone.send(true);
                     return;
                 }
                 log(&format!("Format error: {}", e));
                 let _ = state_tx_clone.send(AppState::Error);
+                let _ = drive_poll_tx_clone.send(true);
                 return;
             }
 
@@ -352,6 +372,7 @@ impl InstallerApp {
                     log(&format!("Error getting mount path: {}", e));
                     crate::debug::log(&format!("ERROR getting mount path: {}", e));
                     let _ = state_tx_clone.send(AppState::Error);
+                    let _ = drive_poll_tx_clone.send(true);
                     return;
                 }
             };
@@ -436,10 +457,12 @@ impl InstallerApp {
                 if e.contains("cancelled") {
                     log("Download cancelled");
                     let _ = state_tx_clone.send(AppState::Idle);
+                    let _ = drive_poll_tx_clone.send(true);
                     return;
                 }
                 log(&format!("Download error: {}", e));
                 let _ = state_tx_clone.send(AppState::Error);
+                let _ = drive_poll_tx_clone.send(true);
                 return;
             }
 
@@ -464,9 +487,14 @@ impl InstallerApp {
 
             // Clean up any previous extraction
             let _ = std::fs::remove_dir_all(&temp_extract_dir);
-            std::fs::create_dir_all(&temp_extract_dir)
-                .map_err(|e| format!("Failed to create temp extract dir: {}", e))
-                .unwrap();
+            if let Err(e) = std::fs::create_dir_all(&temp_extract_dir) {
+                let err_msg = format!("Failed to create temp extract dir: {}", e);
+                log(&err_msg);
+                crate::debug::log(&format!("ERROR: {}", err_msg));
+                let _ = state_tx_clone.send(AppState::Error);
+                let _ = drive_poll_tx_clone.send(true);
+                return;
+            }
 
             let (ext_tx, mut ext_rx) = mpsc::unbounded_channel::<ExtractProgress>();
             let progress_ext = progress.clone();
@@ -516,12 +544,14 @@ impl InstallerApp {
                     log("Extraction cancelled");
                     let _ = std::fs::remove_dir_all(&temp_extract_dir);
                     let _ = state_tx_clone.send(AppState::Idle);
+                    let _ = drive_poll_tx_clone.send(true);
                     return;
                 }
                 write_card_log(&format!("Extract error: {}", e));
                 log(&format!("Extract error: {}", e));
                 let _ = std::fs::remove_dir_all(&temp_extract_dir);
                 let _ = state_tx_clone.send(AppState::Error);
+                let _ = drive_poll_tx_clone.send(true);
                 return;
             }
 
@@ -600,12 +630,14 @@ impl InstallerApp {
                     log("Copy cancelled");
                     let _ = std::fs::remove_dir_all(&temp_extract_dir);
                     let _ = state_tx_clone.send(AppState::Idle);
+                    let _ = drive_poll_tx_clone.send(true);
                     return;
                 }
                 write_card_log(&format!("Copy error: {}", e));
                 log(&format!("Copy error: {}", e));
                 let _ = std::fs::remove_dir_all(&temp_extract_dir);
                 let _ = state_tx_clone.send(AppState::Error);
+                let _ = drive_poll_tx_clone.send(true);
                 return;
             }
 
@@ -641,6 +673,7 @@ impl InstallerApp {
             write_card_log("Installation complete!");
             crate::debug::log("Installation complete!");
             let _ = state_tx_clone.send(AppState::Complete);
+            let _ = drive_poll_tx_clone.send(true);
         });
 
         // Spawn a task to update state from the channel
