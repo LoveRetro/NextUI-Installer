@@ -839,15 +839,18 @@ impl eframe::App for InstallerApp {
         egui::CentralPanel::default()
             .frame(panel_frame)
             .show(ctx, |ui| {
+                //ui.add_space(10.0);
+                ui.horizontal(|ui| {
                 ui.heading(
-                    egui::RichText::new(format!("{} Installer", APP_NAME)).color(COLOR_ACCENT),
-                );
-                ui.add_space(10.0);
+                        egui::RichText::new(format!("{} Installer", APP_NAME)).color(COLOR_ACCENT),
+                    );
+                });
+                //ui.add_space(10.0);
+                ui.horizontal(|ui| {
 
                 // Drive selection
+                    ui.vertical(|ui| {
                 ui.horizontal(|ui| {
-                    ui.label("Target Drive:");
-
                     let selected_text = self
                         .selected_drive_idx
                         .and_then(|idx| self.drives.get(idx))
@@ -871,12 +874,9 @@ impl eframe::App for InstallerApp {
                     }
                 });
 
-                ui.add_space(10.0);
-
                 // Repository selection
-                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
                     ui.label("Release Channel:");
-
                     let selected_repo_name = REPO_OPTIONS[self.selected_repo_idx].0;
 
                     egui::ComboBox::from_id_salt("repo_select")
@@ -885,11 +885,13 @@ impl eframe::App for InstallerApp {
                             for (idx, (name, _url)) in REPO_OPTIONS.iter().enumerate() {
                                 ui.selectable_value(&mut self.selected_repo_idx, idx, *name);
                             }
+                            });
                         });
                 });
 
-                ui.add_space(10.0);
+               // ui.add_space(20.0);
 
+                ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::LeftToRight, egui::Align::Max), |ui| {
                 // Install button
                 let is_busy = matches!(
                     self.state,
@@ -909,8 +911,6 @@ impl eframe::App for InstallerApp {
                         self.state = AppState::AwaitingConfirmation;
                     }
                 });
-
-                ui.add_space(10.0);
 
                 // Progress bar
                 let show_progress = matches!(
@@ -1004,6 +1004,9 @@ impl eframe::App for InstallerApp {
                         ui.colored_label(COLOR_WARNING, "Cancelling...");
                     }
                 }
+                });
+
+                //ui.add_space(10.0);
 
                 // Status
                 match self.state {
