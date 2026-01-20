@@ -94,14 +94,8 @@ impl InstallerApp {
         });
 
         let is_dark = cc.egui_ctx.style().visuals.dark_mode;
-        let theme_config = if is_dark {
-            ThemeConfig::dark_preset()
-        } else {
-            ThemeConfig::light_preset()
-        };
-        let mut theme_state = ThemeEditorState::default();
-        theme_state.current_config = theme_config;
-
+        
+        // Initial app creation to use helper method
         let mut app = Self {
             runtime,
             drives: Vec::new(),
@@ -119,16 +113,28 @@ impl InstallerApp {
             installed_drive: None,
             cancel_token: None,
             drive_rx: rx,
-            theme_state,
+            theme_state: ThemeEditorState::default(),
             show_theme_editor: false,
             last_system_dark_mode: is_dark,
         };
+
+        app.theme_state.current_config = app.get_theme_config(is_dark);
 
         // Initial sync load
         app.drives = get_removable_drives();
         app.ensure_selection_valid();
         
         app
+    }
+
+    fn get_theme_config(&self, is_dark: bool) -> ThemeConfig {
+        let mut config = if is_dark {
+            ThemeConfig::dark_preset()
+        } else {
+            ThemeConfig::light_preset()
+        };
+        config.override_selection_bg = Some([124, 27, 69, 255]);
+        config
     }
 
     fn ensure_selection_valid(&mut self) {
@@ -759,11 +765,7 @@ impl eframe::App for InstallerApp {
         let is_dark = ctx.style().visuals.dark_mode;
         if is_dark != self.last_system_dark_mode {
             self.last_system_dark_mode = is_dark;
-            self.theme_state.current_config = if is_dark {
-                ThemeConfig::dark_preset()
-            } else {
-                ThemeConfig::light_preset()
-            };
+            self.theme_state.current_config = self.get_theme_config(is_dark);
         }
 
         // Theme editor panel

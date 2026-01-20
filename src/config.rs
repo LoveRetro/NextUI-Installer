@@ -120,10 +120,11 @@ pub fn setup_theme(ctx: &egui::Context) {
     use egui_thematic::ThemeConfig;
 
     let is_dark = ctx.style().visuals.dark_mode;
-    let theme = if is_dark {
+    let mut theme = if is_dark {
         ThemeConfig::dark_preset()
     } else {
         ThemeConfig::light_preset()
     };
+    theme.override_selection_bg = Some([124, 27, 69, 255]);
     ctx.set_visuals(theme.to_visuals());
 }
