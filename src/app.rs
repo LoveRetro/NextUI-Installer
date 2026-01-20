@@ -1,7 +1,5 @@
 use crate::config::{
-    setup_theme, APP_NAME, ASSET_EXTENSION, COLOR_ACCENT, COLOR_ACCENT_DIM, COLOR_BG_DARK,
-    COLOR_BG_LIGHT, COLOR_ERROR, COLOR_SPINNER, COLOR_SUCCESS, COLOR_TEXT, COLOR_WARNING,
-    DEFAULT_REPO_INDEX, REPO_OPTIONS, TEMP_PREFIX, VOLUME_LABEL,
+    setup_theme, ASSET_EXTENSION, REPO_OPTIONS, TEMP_PREFIX, VOLUME_LABEL, DEFAULT_REPO_INDEX,
 };
 use crate::copy::{copy_directory_with_progress, CopyProgress};
 use crate::drives::{get_removable_drives, DriveInfo};
@@ -813,8 +811,8 @@ impl eframe::App for InstallerApp {
         // Show confirmation dialog if awaiting confirmation
         if self.state == AppState::AwaitingConfirmation {
             let window_frame = egui::Frame::window(&ctx.style())
-                .fill(COLOR_BG_DARK)
-                .stroke(egui::Stroke::new(1.0, COLOR_ACCENT_DIM));
+                .fill(ctx.style().visuals.window_fill)
+                .stroke(ctx.style().visuals.window_stroke);
 
             let selected_repo_name = REPO_OPTIONS[self.selected_repo_idx].0;
             egui::Window::new(format!("Confirm {} Installation", selected_repo_name))
@@ -825,7 +823,7 @@ impl eframe::App for InstallerApp {
                 .show(ctx, |ui| {
                     ui.vertical_centered(|ui| {
                         ui.add_space(10.0);
-                        ui.colored_label(COLOR_WARNING, "WARNING");
+                        ui.colored_label(ui.visuals().warn_fg_color, "WARNING");
                         ui.add_space(10.0);
 
                         ui.label("This will DELETE ALL DATA on the selected drive:");
@@ -833,7 +831,7 @@ impl eframe::App for InstallerApp {
 
                         if let Some(idx) = self.selected_drive_idx {
                             if let Some(drive) = self.drives.get(idx) {
-                                ui.colored_label(COLOR_ACCENT, drive.display_name());
+                                ui.colored_label(ui.visuals().selection.bg_fill, drive.display_name());
                             }
                         }
 
@@ -849,7 +847,7 @@ impl eframe::App for InstallerApp {
                             ui.add_space(20.0);
 
                             if ui
-                                .add(egui::Button::new(format!("Yes, Install {}", selected_repo_name)).fill(COLOR_ERROR))
+                                .add(egui::Button::new(format!("Yes, Install {}", selected_repo_name)).fill(ui.visuals().error_fg_color))
                                 .clicked()
                             {
                                 self.start_installation(ctx.clone());
@@ -861,7 +859,7 @@ impl eframe::App for InstallerApp {
                 });
         }
 
-        let panel_frame = egui::Frame::central_panel(&ctx.style()).fill(COLOR_BG_DARK);
+        let panel_frame = egui::Frame::central_panel(&ctx.style()).fill(ctx.style().visuals.panel_fill);
 
         egui::CentralPanel::default()
             .frame(panel_frame)
@@ -922,20 +920,20 @@ impl eframe::App for InstallerApp {
                             let count = REPO_OPTIONS.len();
 
                             for (idx, (name, _url)) in REPO_OPTIONS.iter().enumerate() {
-                                let rounding = if count == 1 {
-                                    egui::Rounding::same(4.0)
+                                let corner_radius = if count == 1 {
+                                    egui::CornerRadius::same(4)
                                 } else if idx == 0 {
-                                    egui::Rounding { nw: 4.0, sw: 4.0, ne: 0.0, se: 0.0 }
+                                    egui::CornerRadius { nw: 4, sw: 4, ne: 0, se: 0 }
                                 } else if idx == count - 1 {
-                                    egui::Rounding { nw: 0.0, sw: 0.0, ne: 4.0, se: 4.0 }
+                                    egui::CornerRadius { nw: 0, sw: 0, ne: 4, se: 4 }
                                 } else {
-                                    egui::Rounding::ZERO
+                                    egui::CornerRadius::ZERO
                                 };
 
                                 ui.scope(|ui| {
-                                    ui.visuals_mut().widgets.inactive.rounding = rounding;
-                                    ui.visuals_mut().widgets.hovered.rounding = rounding;
-                                    ui.visuals_mut().widgets.active.rounding = rounding;
+                                    ui.visuals_mut().widgets.inactive.corner_radius = corner_radius;
+                                    ui.visuals_mut().widgets.hovered.corner_radius = corner_radius;
+                                    ui.visuals_mut().widgets.active.corner_radius = corner_radius;
 
                                     if ui.add(egui::SelectableLabel::new(
                                         self.selected_repo_idx == idx,
@@ -972,7 +970,7 @@ impl eframe::App for InstallerApp {
 
                     ui.horizontal(|ui| {
                         ui.vertical_centered(|ui| {
-                            ui.colored_label(COLOR_TEXT, &message);
+                            ui.label(&message);
                         });
                     });
                     //ui.colored_label(COLOR_TEXT, &message);
@@ -1001,7 +999,7 @@ impl eframe::App for InstallerApp {
                                     let painter = ui.painter();
 
                                     // Background
-                                    painter.rect_filled(rect, 4.0, COLOR_BG_LIGHT);
+                                    painter.rect_filled(rect, 4.0, ui.visuals().widgets.noninteractive.bg_fill);
 
                                     // Animated highlight - moves back and forth
                                     let cycle = (time * 0.8).sin() * 0.5 + 0.5; // 0.0 to 1.0
@@ -1013,7 +1011,7 @@ impl eframe::App for InstallerApp {
                                         egui::vec2(bar_width, rect.height()),
                                     );
 
-                                    painter.rect_filled(highlight_rect, 4.0, COLOR_ACCENT);
+                                    painter.rect_filled(highlight_rect, 4.0, ui.visuals().selection.bg_fill);
                                 }
                             } else {
                                 // Normal progress bar for downloading
@@ -1025,7 +1023,7 @@ impl eframe::App for InstallerApp {
 
                                 ui.add(
                                     egui::ProgressBar::new(progress)
-                                        .fill(COLOR_ACCENT).desired_height(6.0).desired_width(ui.available_width() / 2.0)
+                                        .fill(ui.visuals().selection.bg_fill).desired_height(6.0).desired_width(ui.available_width() / 2.0)
                                 );
                             }
                         });
@@ -1079,7 +1077,7 @@ impl eframe::App for InstallerApp {
                 match self.state {
                     AppState::Complete => {
                         let selected_repo_name = REPO_OPTIONS[self.selected_repo_idx].0;
-                        ui.colored_label(COLOR_SUCCESS, format!("{} installation complete!", selected_repo_name));
+                        ui.colored_label(egui::Color32::from_rgb(91, 154, 91), format!("{} installation complete!", selected_repo_name));
                         ui.add_space(5.0);
                         if ui.button("Safely Eject SD Card").clicked() {
                             if let Some(drive) = self.installed_drive.clone() {
@@ -1108,19 +1106,19 @@ impl eframe::App for InstallerApp {
                     }
                     AppState::Ejecting => {
                         let selected_repo_name = REPO_OPTIONS[self.selected_repo_idx].0;
-                        ui.colored_label(COLOR_SUCCESS, format!("{} installation complete!", selected_repo_name));
+                        ui.colored_label(egui::Color32::from_rgb(91, 154, 91), format!("{} installation complete!", selected_repo_name));
                         ui.add_space(5.0);
                         ui.horizontal(|ui| {
-                            ui.add(egui::Spinner::new().color(COLOR_SPINNER));
+                            ui.add(egui::Spinner::new().color(ui.visuals().selection.bg_fill));
                             ui.label(" Ejecting SD card...");
                         });
                     }
                     AppState::Ejected => {
-                        ui.colored_label(COLOR_SUCCESS, "SD card ejected! You may safely remove it.");
+                        ui.colored_label(egui::Color32::from_rgb(91, 154, 91), "SD card ejected! You may safely remove it.");
                     }
                     AppState::Error => {
                         let selected_repo_name = REPO_OPTIONS[self.selected_repo_idx].0;
-                        ui.colored_label(COLOR_ERROR, format!("{} installation failed. See log for details.", selected_repo_name));
+                        ui.colored_label(ui.visuals().error_fg_color, format!("{} installation failed. See log for details.", selected_repo_name));
                     }
                     _ => {}
                 }
@@ -1137,7 +1135,7 @@ impl eframe::App for InstallerApp {
                     .show(ui, |ui| {
                         if let Ok(logs) = self.log_messages.lock() {
                             for msg in logs.iter() {
-                                ui.colored_label(COLOR_TEXT, msg);
+                                ui.label(msg);
                             }
                         }
                     });
