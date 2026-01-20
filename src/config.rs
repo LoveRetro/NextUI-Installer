@@ -50,7 +50,7 @@ pub const TEMP_PREFIX: &str = env!("CARGO_PKG_NAME");
 // Each entry is (Display Name, GitHub repo in "owner/repo" format)
 
 pub const REPO_OPTIONS: &[(&str, &str)] = &[
-    ("stable", "LoveRetro/NextUI"),
+    ("NextUI stable", "LoveRetro/NextUI"),
     ("beta", "LoveRetro/NextUI-nightly"),
 ];
 
@@ -104,7 +104,7 @@ pub const COLOR_SPINNER: egui::Color32 = egui::Color32::from_rgb(170, 135, 60);
 // ----------------------------------------------------------------------------
 
 /// Default window size (width, height)
-pub const WINDOW_SIZE: (f32, f32) = (500.0, 400.0);
+pub const WINDOW_SIZE: (f32, f32) = (400.0, 300.0);
 
 /// Minimum window size (width, height)
 pub const WINDOW_MIN_SIZE: (f32, f32) = (400.0, 300.0);

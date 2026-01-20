@@ -866,24 +866,25 @@ impl eframe::App for InstallerApp {
         egui::CentralPanel::default()
             .frame(panel_frame)
             .show(ctx, |ui| {
-                //ui.add_space(10.0);
+                ui.add_space(24.0);
                 ui.horizontal(|ui| {
                     ui.vertical_centered(|ui| {
                         let is_dark = ctx.style().visuals.dark_mode;
                         let image = if is_dark {
-                            egui::include_image!("../data/icons/nextui_vectorized_shadow_dark.svg")
-                        } else {
                             egui::include_image!("../data/icons/nextui_vectorized_shadow.svg")
+                        } else {
+                            egui::include_image!("../data/icons/nextui_vectorized_shadow_dark.svg")
                         };
                         ui.add(egui::Image::new(image).fit_to_exact_size(egui::vec2(60.0, 60.0)));
                     });
                 });
-                //ui.add_space(10.0);
-                ui.horizontal(|ui| {
-
-                    // Drive selection
-                    ui.vertical(|ui| {
-                        ui.horizontal(|ui| {
+                ui.add_space(16.0);
+                ui.columns(2, |columns| {
+                    columns[0].allocate_ui_with_layout(
+                        egui::Vec2::ZERO,
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            // Drive selection
                             let (selected_text, enabled) = if self.drives.is_empty() {
                                 ("No SD card".to_string(), false)
                             } else {
@@ -895,7 +896,7 @@ impl eframe::App for InstallerApp {
                                     true
                                 )
                             };
-            
+
                             ui.add_enabled_ui(enabled, |ui| {
                                 egui::ComboBox::from_id_salt("drive_select")
                                     .selected_text(&selected_text)
@@ -909,12 +910,14 @@ impl eframe::App for InstallerApp {
                                         }
                                     });
                             });
-                        })
-                    });
+                        }
+                    );
 
-                    // Repository selection
-                    ui.vertical(|ui| {
-                        ui.horizontal(|ui| {
+                    columns[1].allocate_ui_with_layout(
+                        egui::Vec2::ZERO,
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            // Repository selection
                             ui.spacing_mut().item_spacing.x = 0.0;
                             let count = REPO_OPTIONS.len();
 
@@ -942,102 +945,116 @@ impl eframe::App for InstallerApp {
                                     }
                                 });
                             }
-                        });
-                    });
+                        },
+                    );
                 });
 
-               // ui.add_space(20.0);
+                ui.add_space(12.0);
 
-                ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::LeftToRight, egui::Align::Max), |ui| {
-                    // Install button
-                    let is_busy = matches!(
-                        self.state,
-                        AppState::FetchingRelease
-                            | AppState::Downloading
-                            | AppState::Formatting
-                            | AppState::Extracting
-                            | AppState::Copying
-                            | AppState::AwaitingConfirmation
-                            | AppState::Ejecting
-                            | AppState::Cancelling
-                    );
-    
-                    ui.add_enabled_ui(!is_busy && self.selected_drive_idx.is_some() && !self.drives.is_empty(), |ui| {
-                        let selected_repo_name = REPO_OPTIONS[self.selected_repo_idx].0;
-                        if ui.button(format!("Install {}", selected_repo_name)).clicked() {
-                            self.state = AppState::AwaitingConfirmation;
-                        }
+                // Progress bar
+                let show_progress = matches!(
+                    self.state,
+                    AppState::FetchingRelease
+                        | AppState::Downloading
+                        | AppState::Formatting
+                        | AppState::Extracting
+                        | AppState::Copying
+                        | AppState::Cancelling
+                        //| AppState::Idle // only for debugging layout
+                );
+
+                if show_progress {
+                    
+                    let (current, total, message) = {
+                        let p = self.progress.lock().unwrap();
+                        (p.current, p.total, p.message.clone())
+                    };
+
+                    ui.horizontal(|ui| {
+                        ui.vertical_centered(|ui| {
+                            ui.colored_label(COLOR_TEXT, &message);
+                        });
                     });
+                    //ui.colored_label(COLOR_TEXT, &message);
+                    ui.add_space(8.0);
 
-                    // Progress bar
-                    let show_progress = matches!(
-                        self.state,
-                        AppState::FetchingRelease
-                            | AppState::Downloading
-                            | AppState::Formatting
-                            | AppState::Extracting
-                            | AppState::Copying
-                            | AppState::Cancelling
-                    );
-    
-                    if show_progress {
-                        let (current, total, message) = {
-                            let p = self.progress.lock().unwrap();
-                            (p.current, p.total, p.message.clone())
-                        };
-    
-                        // Only FetchingRelease has indeterminate progress
-                        // Downloading, Formatting, and Extracting now report percentages
-                        let is_indeterminate = matches!(
+                    ui.horizontal(|ui| {
+                        ui.vertical_centered(|ui| {
+                            
+                            // Only FetchingRelease has indeterminate progress
+                            // Downloading, Formatting, and Extracting now report percentages
+                            let is_indeterminate = matches!(
+                                self.state,
+                                AppState::FetchingRelease | AppState::Idle
+                            );
+
+                            if is_indeterminate {
+                                // Animated indeterminate progress bar
+                                let time = ctx.input(|i| i.time);
+
+                                // Allocate space for the progress bar
+                                let desired_size = egui::vec2(ui.available_width() / 2.0, 6.0);
+                                let (rect, _response) =
+                                    ui.allocate_exact_size(desired_size, egui::Sense::hover());
+
+                                if ui.is_rect_visible(rect) {
+                                    let painter = ui.painter();
+
+                                    // Background
+                                    painter.rect_filled(rect, 4.0, COLOR_BG_LIGHT);
+
+                                    // Animated highlight - moves back and forth
+                                    let cycle = (time * 0.8).sin() * 0.5 + 0.5; // 0.0 to 1.0
+                                    let bar_width = rect.width() * 0.3;
+                                    let bar_x = rect.left() + (rect.width() - bar_width) * cycle as f32;
+
+                                    let highlight_rect = egui::Rect::from_min_size(
+                                        egui::pos2(bar_x, rect.top()),
+                                        egui::vec2(bar_width, rect.height()),
+                                    );
+
+                                    painter.rect_filled(highlight_rect, 4.0, COLOR_ACCENT);
+                                }
+                            } else {
+                                // Normal progress bar for downloading
+                                let progress = if total > 0 {
+                                    current as f32 / total as f32
+                                } else {
+                                    0.0
+                                };
+
+                                ui.add(
+                                    egui::ProgressBar::new(progress)
+                                        .fill(COLOR_ACCENT).desired_height(6.0).desired_width(ui.available_width() / 2.0)
+                                );
+                            }
+                        });
+                    });
+                    ui.add_space(12.0);
+                }
+
+
+                ui.horizontal(|ui| {
+                    ui.vertical_centered(|ui| {
+                        // Install button
+                        let is_busy = matches!(
                             self.state,
                             AppState::FetchingRelease
+                                | AppState::Downloading
+                                | AppState::Formatting
+                                | AppState::Extracting
+                                | AppState::Copying
+                                | AppState::AwaitingConfirmation
+                                | AppState::Ejecting
+                                | AppState::Cancelling
                         );
-    
-                        if is_indeterminate {
-                            // Animated indeterminate progress bar
-                            let time = ctx.input(|i| i.time);
-    
-                            // Allocate space for the progress bar
-                            let desired_size = egui::vec2(ui.available_width(), 20.0);
-                            let (rect, _response) =
-                                ui.allocate_exact_size(desired_size, egui::Sense::hover());
-    
-                            if ui.is_rect_visible(rect) {
-                                let painter = ui.painter();
-    
-                                // Background
-                                painter.rect_filled(rect, 4.0, COLOR_BG_LIGHT);
-    
-                                // Animated highlight - moves back and forth
-                                let cycle = (time * 0.8).sin() * 0.5 + 0.5; // 0.0 to 1.0
-                                let bar_width = rect.width() * 0.3;
-                                let bar_x = rect.left() + (rect.width() - bar_width) * cycle as f32;
-    
-                                let highlight_rect = egui::Rect::from_min_size(
-                                    egui::pos2(bar_x, rect.top()),
-                                    egui::vec2(bar_width, rect.height()),
-                                );
-    
-                                painter.rect_filled(highlight_rect, 4.0, COLOR_ACCENT);
+        
+                        ui.add_enabled_ui(!is_busy && self.selected_drive_idx.is_some() && !self.drives.is_empty(), |ui| {
+                            if ui.button("Install").clicked() {
+                                self.state = AppState::AwaitingConfirmation;
                             }
-                        } else {
-                            // Normal progress bar for downloading
-                            let progress = if total > 0 {
-                                current as f32 / total as f32
-                            } else {
-                                0.0
-                            };
-    
-                            ui.add(
-                                egui::ProgressBar::new(progress)
-                                    .fill(COLOR_ACCENT)
-                                    .show_percentage(),
-                            );
-                        }
-    
-                        ui.add_space(5.0);
-                        ui.colored_label(COLOR_TEXT, &message);
-    
+                        });
+
                         // Cancel button (only show during cancellable operations)
                         let can_cancel = matches!(
                             self.state,
@@ -1047,23 +1064,16 @@ impl eframe::App for InstallerApp {
                                 | AppState::Extracting
                                 | AppState::Copying
                         ) && self.cancel_token.is_some();
-    
+
                         if can_cancel {
-                            ui.add_space(10.0);
                             if ui.button("Cancel").clicked() {
                                 self.cancel_installation();
                             }
                         }
-    
-                        // Show cancelling message
-                        if self.state == AppState::Cancelling {
-                            ui.add_space(5.0);
-                            ui.colored_label(COLOR_WARNING, "Cancelling...");
-                        }
-                    }
+                    });
                 });
 
-                //ui.add_space(10.0);
+                ui.add_space(10.0);
 
                 // Status
                 match self.state {
