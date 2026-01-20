@@ -116,6 +116,10 @@ fn main() -> eframe::Result<()> {
                 faint_bg_color: COLOR_BG_DARK,
                 ..egui::Visuals::dark()
             });
+
+            // Initialize image loaders for SVG support
+            egui_extras::install_image_loaders(&cc.egui_ctx);
+
             Ok(Box::new(InstallerApp::new(cc)))
         }),
     )

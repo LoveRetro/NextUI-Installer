@@ -868,9 +868,15 @@ impl eframe::App for InstallerApp {
             .show(ctx, |ui| {
                 //ui.add_space(10.0);
                 ui.horizontal(|ui| {
-                    ui.heading(
-                        egui::RichText::new(format!("{} Installer", APP_NAME)).color(COLOR_ACCENT),
-                    );
+                    ui.vertical_centered(|ui| {
+                        let is_dark = ctx.style().visuals.dark_mode;
+                        let image = if is_dark {
+                            egui::include_image!("../data/icons/nextui_vectorized_shadow_dark.svg")
+                        } else {
+                            egui::include_image!("../data/icons/nextui_vectorized_shadow.svg")
+                        };
+                        ui.add(egui::Image::new(image).fit_to_exact_size(egui::vec2(60.0, 60.0)));
+                    });
                 });
                 //ui.add_space(10.0);
                 ui.horizontal(|ui| {

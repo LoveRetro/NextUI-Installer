@@ -13,6 +13,7 @@ icon = ["image"]
 [dependencies]
 eframe = "0.29"
 egui = "0.29"
+egui_extras = { version = "0.29", features = ["all_loaders"] }
 tokio = { version = "1", features = ["rt-multi-thread", "fs", "process", "sync", "time", "io-util", "macros"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 sevenz-rust = "0.6"
