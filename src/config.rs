@@ -50,8 +50,8 @@ pub const TEMP_PREFIX: &str = env!("CARGO_PKG_NAME");
 // Each entry is (Display Name, GitHub repo in "owner/repo" format)
 
 pub const REPO_OPTIONS: &[(&str, &str)] = &[
-    ("NextUI (stable)", "LoveRetro/NextUI"),
-    ("NextUI (nightlies)", "LoveRetro/NextUI-nightly"),
+    ("stable", "LoveRetro/NextUI"),
+    ("beta", "LoveRetro/NextUI-nightly"),
 ];
 
 /// Index of the default repository selection (0 = first option)

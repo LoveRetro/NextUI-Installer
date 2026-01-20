@@ -879,7 +879,7 @@ impl eframe::App for InstallerApp {
                     ui.vertical(|ui| {
                         ui.horizontal(|ui| {
                             let (selected_text, enabled) = if self.drives.is_empty() {
-                                ("No SD card detected".to_string(), false)
+                                ("No SD card".to_string(), false)
                             } else {
                                 (
                                     self.selected_drive_idx
@@ -908,16 +908,16 @@ impl eframe::App for InstallerApp {
 
                     // Repository selection
                     ui.vertical(|ui| {
-                        ui.label("Release Channel:");
-                        let selected_repo_name = REPO_OPTIONS[self.selected_repo_idx].0;
-        
-                        egui::ComboBox::from_id_salt("repo_select")
-                            .selected_text(selected_repo_name)
-                            .show_ui(ui, |ui| {
-                                for (idx, (name, _url)) in REPO_OPTIONS.iter().enumerate() {
-                                    ui.selectable_value(&mut self.selected_repo_idx, idx, *name);
+                        ui.horizontal(|ui| {
+                            for (idx, (name, _url)) in REPO_OPTIONS.iter().enumerate() {
+                                if ui.add(egui::SelectableLabel::new(
+                                    self.selected_repo_idx == idx,
+                                    *name,
+                                )).clicked() {
+                                    self.selected_repo_idx = idx;
                                 }
-                            });
+                            }
+                        });
                     });
                 });
 
