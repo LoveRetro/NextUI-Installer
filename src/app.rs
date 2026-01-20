@@ -878,23 +878,31 @@ impl eframe::App for InstallerApp {
                     // Drive selection
                     ui.vertical(|ui| {
                         ui.horizontal(|ui| {
-                            let selected_text = self
-                                .selected_drive_idx
-                                .and_then(|idx| self.drives.get(idx))
-                                .map(|d| d.display_name())
-                                .unwrap_or_else(|| "No drives found".to_string());
+                            let (selected_text, enabled) = if self.drives.is_empty() {
+                                ("No SD card detected".to_string(), false)
+                            } else {
+                                (
+                                    self.selected_drive_idx
+                                        .and_then(|idx| self.drives.get(idx))
+                                        .map(|d| d.display_name())
+                                        .unwrap_or_else(|| "Select Drive".to_string()),
+                                    true
+                                )
+                            };
             
-                            egui::ComboBox::from_id_salt("drive_select")
-                                .selected_text(&selected_text)
-                                .show_ui(ui, |ui| {
-                                    for (idx, drive) in self.drives.iter().enumerate() {
-                                        ui.selectable_value(
-                                            &mut self.selected_drive_idx,
-                                            Some(idx),
-                                            drive.display_name(),
-                                        );
-                                    }
-                                });
+                            ui.add_enabled_ui(enabled, |ui| {
+                                egui::ComboBox::from_id_salt("drive_select")
+                                    .selected_text(&selected_text)
+                                    .show_ui(ui, |ui| {
+                                        for (idx, drive) in self.drives.iter().enumerate() {
+                                            ui.selectable_value(
+                                                &mut self.selected_drive_idx,
+                                                Some(idx),
+                                                drive.display_name(),
+                                            );
+                                        }
+                                    });
+                            });
                         })
                     });
 
@@ -929,7 +937,7 @@ impl eframe::App for InstallerApp {
                             | AppState::Cancelling
                     );
     
-                    ui.add_enabled_ui(!is_busy && self.selected_drive_idx.is_some(), |ui| {
+                    ui.add_enabled_ui(!is_busy && self.selected_drive_idx.is_some() && !self.drives.is_empty(), |ui| {
                         let selected_repo_name = REPO_OPTIONS[self.selected_repo_idx].0;
                         if ui.button(format!("Install {}", selected_repo_name)).clicked() {
                             self.state = AppState::AwaitingConfirmation;
