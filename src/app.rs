@@ -970,6 +970,7 @@ impl eframe::App for InstallerApp {
             .show(ctx, |ui| {
                 ui.set_enabled(self.state != AppState::AwaitingConfirmation);
                 //ctx.set_zoom_factor(1.15);
+                //ui.style_mut().spacing.item_spacing = egui::vec2(16.0, 16.0);
 
                 ui.columns(3, |columns| {
                     columns[0].allocate_ui_with_layout(
@@ -1102,7 +1103,7 @@ impl eframe::App for InstallerApp {
                         | AppState::Extracting
                         | AppState::Copying
                         | AppState::Cancelling
-                        | AppState::Idle // only for debugging layout
+                        //| AppState::Idle // only for debugging layout
                 );
 
                 if show_progress {
@@ -1114,8 +1115,7 @@ impl eframe::App for InstallerApp {
 
                     ui.horizontal(|ui| {
                         ui.vertical_centered(|ui| {
-                            //ui.label(&message);
-                            ui.label("Message test");
+                            ui.label(&message);
                         });
                     });
                     ui.add_space(8.0);
@@ -1194,12 +1194,14 @@ impl eframe::App for InstallerApp {
                                 | AppState::Ejecting
                                 | AppState::Cancelling
                         );
-        
-                        ui.add_enabled_ui(!is_busy && self.selected_drive_idx.is_some() && !self.drives.is_empty(), |ui| {
-                            if ui.button("Install").clicked() {
-                                self.state = AppState::AwaitingConfirmation;
-                            }
-                        });
+                        
+                        if !is_busy {
+                            ui.add_enabled_ui(!is_busy && self.selected_drive_idx.is_some() && !self.drives.is_empty(), |ui| {
+                                if ui.button("Install").clicked() {
+                                    self.state = AppState::AwaitingConfirmation;
+                                }
+                            });
+                        }
 
                         // Cancel button (only show during cancellable operations)
                         let can_cancel = matches!(
