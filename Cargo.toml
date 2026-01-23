@@ -1,8 +1,8 @@
 [package]
-name = "nextui-installer"
+name = "spruceos-installer"
 version = "1.0.0"
 edition = "2021"
-description = "NextUI SD Card Installer"
+description = "SpruceOS SD Card Installer"
 authors = ["SpruceOS Team", "NextUI Team"]
 license = "GPL-3.0-or-later"
 
@@ -44,3 +44,4 @@ embed-resource = "2"
 opt-level = "z"
 lto = true
 strip = "debuginfo"
+

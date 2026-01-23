@@ -6,7 +6,7 @@ use crate::drives::{get_removable_drives, DriveInfo};
 use crate::eject::eject_drive;
 use crate::extract::{extract_7z_with_progress, ExtractProgress};
 use crate::format::{format_drive_fat32, FormatProgress};
-use crate::github::{download_asset, find_release_asset, get_latest_release, DownloadProgress, Release};
+use crate::github::{download_asset, find_release_asset, get_latest_release, DownloadProgress};
 use eframe::egui;
 use egui_thematic::{ThemeConfig, ThemeEditorState, render_theme_panel};
 use std::path::PathBuf;
@@ -46,15 +46,11 @@ pub struct InstallerApp {
     drives: Vec<DriveInfo>,
     selected_drive_idx: Option<usize>,
     selected_repo_idx: usize,
-    release_info: Option<Release>,
 
     // Progress tracking
     state: AppState,
     progress: Arc<Mutex<ProgressInfo>>,
     log_messages: Arc<Mutex<Vec<String>>>,
-
-    // Temp file for downloads
-    temp_download_path: Option<PathBuf>,
 
     // Drive that was installed to (for eject)
     installed_drive: Option<DriveInfo>,
@@ -71,6 +67,57 @@ pub struct InstallerApp {
     show_theme_editor: bool,
     show_log: bool,
     last_system_dark_mode: bool,
+}
+
+/// Get available disk space for a given path (in bytes)
+fn get_available_disk_space(path: &std::path::Path) -> u64 {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+
+        let path_wide: Vec<u16> = path.as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect();
+
+        let mut free_bytes = 0u64;
+        unsafe {
+            if GetDiskFreeSpaceExW(
+                windows::core::PCWSTR(path_wide.as_ptr()),
+                None,
+                None,
+                Some(&mut free_bytes),
+            ).is_ok() {
+                return free_bytes;
+            }
+        }
+        crate::debug::log("WARNING: Failed to get disk space on Windows, assuming sufficient space");
+        u64::MAX // Assume sufficient space if we can't check
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let path_cstr = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap_or_default();
+        let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+
+        unsafe {
+            if libc::statvfs(path_cstr.as_ptr(), &mut stat) == 0 {
+                // Available space = block size * available blocks
+                // Cast both to u64 to handle platforms where they're u32 (macOS, ARM32)
+                return (stat.f_bavail as u64) * (stat.f_bsize as u64);
+            }
+        }
+        crate::debug::log("WARNING: Failed to get disk space on Unix, assuming sufficient space");
+        u64::MAX // Assume sufficient space if we can't check
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    {
+        crate::debug::log("WARNING: Disk space check not supported on this platform");
+        u64::MAX // Assume sufficient space on unsupported platforms
+    }
 }
 
 impl InstallerApp {
@@ -111,7 +158,6 @@ impl InstallerApp {
             drives: Vec::new(),
             selected_drive_idx: None,
             selected_repo_idx: DEFAULT_REPO_INDEX,
-            release_info: None,
             state: AppState::Idle,
             progress: Arc::new(Mutex::new(ProgressInfo {
                 current: 0,
@@ -119,7 +165,6 @@ impl InstallerApp {
                 message: String::new(),
             })),
             log_messages: Arc::new(Mutex::new(Vec::new())),
-            temp_download_path: None,
             installed_drive: None,
             cancel_token: None,
             drive_rx: rx,
@@ -130,7 +175,7 @@ impl InstallerApp {
             last_system_dark_mode: is_dark,
         };
 
-        app.theme_state.current_config = app.get_theme_config(is_dark);
+        app.theme_state.current_config = app.get_theme_config();
 
         // Initial sync load
         app.drives = get_removable_drives();
@@ -139,15 +184,77 @@ impl InstallerApp {
         app
     }
 
-    fn get_theme_config(&self, is_dark: bool) -> ThemeConfig {
-        let mut config = if is_dark {
-            ThemeConfig::dark_preset()
-        } else {
-            ThemeConfig::light_preset()
-        };
-        config.override_selection_bg = Some([124, 27, 69, 255]);
-        config.override_selection_stroke_color = Some([224, 210, 210, 255]);
-        config
+    fn get_theme_config(&self) -> ThemeConfig {
+        ThemeConfig {
+            name: "SpruceOS".to_string(),
+            dark_mode: true,
+            override_text_color: Some([251, 241, 199, 255]),
+            override_weak_text_color: Some([124, 111, 100, 255]),
+            override_hyperlink_color: Some([131, 165, 152, 255]),
+            override_faint_bg_color: Some([48, 48, 48, 255]),
+            override_extreme_bg_color: Some([29, 32, 33, 255]),
+            override_code_bg_color: Some([60, 56, 54, 255]),
+            override_warn_fg_color: Some([214, 93, 14, 255]),
+            override_error_fg_color: Some([204, 36, 29, 255]),
+            override_window_fill: Some([40, 40, 40, 255]),
+            override_window_stroke_color: None,
+            override_window_stroke_width: None,
+            override_window_corner_radius: None,
+            override_window_shadow_size: None,
+            override_panel_fill: Some([40, 40, 40, 255]),
+            override_popup_shadow_size: None,
+            override_selection_bg: Some([215, 180, 95, 255]),
+            override_selection_stroke_color: None,
+            override_selection_stroke_width: None,
+            override_widget_noninteractive_bg_fill: None,
+            override_widget_noninteractive_weak_bg_fill: None,
+            override_widget_noninteractive_bg_stroke_color: None,
+            override_widget_noninteractive_bg_stroke_width: None,
+            override_widget_noninteractive_corner_radius: None,
+            override_widget_noninteractive_fg_stroke_color: None,
+            override_widget_noninteractive_fg_stroke_width: None,
+            override_widget_noninteractive_expansion: None,
+            override_widget_inactive_bg_fill: Some([215, 180, 95, 255]),
+            override_widget_inactive_weak_bg_fill: None,
+            override_widget_inactive_bg_stroke_color: Some([124, 111, 100, 100]),
+            override_widget_inactive_bg_stroke_width: None,
+            override_widget_inactive_corner_radius: None,
+            override_widget_inactive_fg_stroke_color: Some([104, 157, 106, 255]),
+            override_widget_inactive_fg_stroke_width: None,
+            override_widget_inactive_expansion: None,
+            override_widget_hovered_bg_fill: Some([215, 180, 95, 60]),
+            override_widget_hovered_weak_bg_fill: None,
+            override_widget_hovered_bg_stroke_color: Some([215, 180, 95, 255]),
+            override_widget_hovered_bg_stroke_width: None,
+            override_widget_hovered_corner_radius: None,
+            override_widget_hovered_fg_stroke_color: None,
+            override_widget_hovered_fg_stroke_width: None,
+            override_widget_hovered_expansion: None,
+            override_widget_active_bg_fill: Some([215, 180, 95, 100]),
+            override_widget_active_weak_bg_fill: None,
+            override_widget_active_bg_stroke_color: Some([215, 180, 95, 255]),
+            override_widget_active_bg_stroke_width: None,
+            override_widget_active_corner_radius: None,
+            override_widget_active_fg_stroke_color: None,
+            override_widget_active_fg_stroke_width: None,
+            override_widget_active_expansion: None,
+            override_widget_open_bg_fill: None,
+            override_widget_open_weak_bg_fill: None,
+            override_widget_open_bg_stroke_color: None,
+            override_widget_open_bg_stroke_width: None,
+            override_widget_open_corner_radius: None,
+            override_widget_open_fg_stroke_color: None,
+            override_widget_open_fg_stroke_width: None,
+            override_widget_open_expansion: None,
+            override_resize_corner_size: None,
+            override_text_cursor_width: None,
+            override_clip_rect_margin: None,
+            override_button_frame: None,
+            override_collapsing_header_frame: None,
+            override_indent_has_left_vline: None,
+            override_striped: None,
+            override_slider_trailing_fill: None,
+        }
     }
 
     fn ensure_selection_valid(&mut self) {
@@ -210,6 +317,24 @@ impl InstallerApp {
         crate::debug::log(&format!("Drive size: {} bytes", drive.size_bytes));
         crate::debug::log(&format!("Mount path: {:?}", drive.mount_path));
         crate::debug::log(&format!("Repository: {} ({})", repo_name, repo_url));
+
+        // Check if running as root on Linux
+        #[cfg(target_os = "linux")]
+        {
+            if unsafe { libc::geteuid() } == 0 {
+                crate::debug::log("WARNING: Running as root user");
+                if let Ok(sudo_user) = std::env::var("SUDO_USER") {
+                    crate::debug::log(&format!("Detected sudo execution by user: {}", sudo_user));
+                    self.log("Note: Running with sudo/root privileges");
+                } else if let Ok(pkexec_uid) = std::env::var("PKEXEC_UID") {
+                    crate::debug::log(&format!("Detected pkexec execution by UID: {}", pkexec_uid));
+                    self.log("Note: Running with elevated privileges (pkexec)");
+                } else {
+                    crate::debug::log("Running as actual root user (not via sudo/pkexec)");
+                    self.log("Note: Running as root user");
+                }
+            }
+        }
 
         let repo_url = repo_url.to_string();
         let progress = self.progress.clone();
@@ -290,10 +415,89 @@ impl InstallerApp {
             // Define temp/cache directory for later use
             // On Linux/macOS, use cache dir to avoid temp space issues
             // Linux: ~/.cache, macOS: ~/Library/Caches
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            #[cfg(target_os = "linux")]
+            let temp_dir = {
+                // If running as root via sudo or pkexec, try to use the actual user's cache directory
+                if unsafe { libc::geteuid() } == 0 {
+                    // First check for SUDO_USER (command-line sudo)
+                    if let Ok(sudo_user) = std::env::var("SUDO_USER") {
+                        let user_home = std::path::PathBuf::from(format!("/home/{}", sudo_user));
+                        if user_home.exists() {
+                            let user_cache = user_home.join(".cache");
+                            crate::debug::log(&format!("Using cache dir for sudo user {}: {:?}", sudo_user, user_cache));
+                            user_cache
+                        } else {
+                            crate::debug::log(&format!("User home not found at {:?}, using default", user_home));
+                            dirs::cache_dir().unwrap_or_else(std::env::temp_dir)
+                        }
+                    }
+                    // Check for PKEXEC_UID (GUI elevation via pkexec)
+                    else if let Ok(pkexec_uid) = std::env::var("PKEXEC_UID") {
+                        if let Ok(uid) = pkexec_uid.parse::<u32>() {
+                            // Get username from UID using libc
+                            let pwd = unsafe { libc::getpwuid(uid) };
+                            if !pwd.is_null() {
+                                let username = unsafe {
+                                    std::ffi::CStr::from_ptr((*pwd).pw_name)
+                                        .to_string_lossy()
+                                        .to_string()
+                                };
+                                let user_home = std::path::PathBuf::from(format!("/home/{}", username));
+                                if user_home.exists() {
+                                    let user_cache = user_home.join(".cache");
+                                    crate::debug::log(&format!("Using cache dir for pkexec user {} (UID {}): {:?}", username, uid, user_cache));
+                                    user_cache
+                                } else {
+                                    crate::debug::log(&format!("User home not found at {:?}, using default", user_home));
+                                    dirs::cache_dir().unwrap_or_else(std::env::temp_dir)
+                                }
+                            } else {
+                                crate::debug::log(&format!("Failed to get username for UID {}, using default", uid));
+                                dirs::cache_dir().unwrap_or_else(std::env::temp_dir)
+                            }
+                        } else {
+                            crate::debug::log(&format!("Failed to parse PKEXEC_UID '{}', using default", pkexec_uid));
+                            dirs::cache_dir().unwrap_or_else(std::env::temp_dir)
+                        }
+                    }
+                    else {
+                        crate::debug::log("Running as root, using root's cache dir");
+                        dirs::cache_dir().unwrap_or_else(std::env::temp_dir)
+                    }
+                } else {
+                    dirs::cache_dir().unwrap_or_else(std::env::temp_dir)
+                }
+            };
+            #[cfg(target_os = "macos")]
             let temp_dir = dirs::cache_dir().unwrap_or_else(std::env::temp_dir);
             #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             let temp_dir = std::env::temp_dir();
+
+            crate::debug::log(&format!("Cache/temp directory: {:?}", temp_dir));
+
+            // Check available disk space before starting
+            // We need space for: download (asset.size) + extraction (~3x asset.size)
+            let required_space = asset.size * 4; // 4x for safety margin
+            let available_space = get_available_disk_space(&temp_dir);
+
+            crate::debug::log(&format!("Required disk space: {} MB", required_space / 1_048_576));
+            crate::debug::log(&format!("Available disk space: {} MB", available_space / 1_048_576));
+
+            if available_space < required_space {
+                let required_mb = required_space / 1_048_576;
+                let available_mb = available_space / 1_048_576;
+                let err_msg = format!(
+                    "Insufficient disk space. Need {} MB, but only {} MB available in cache directory. Please free up disk space and try again.",
+                    required_mb, available_mb
+                );
+                log(&err_msg);
+                crate::debug::log(&format!("ERROR: {}", err_msg));
+                let _ = state_tx_clone.send(AppState::Error);
+                let _ = drive_poll_tx_clone.send(true);
+                return;
+            }
+
+            log(&format!("Disk space check passed: {} MB available", available_space / 1_048_576));
 
             // Step 2: Format drive (do this first so we fail fast if the card has issues)
             let _ = state_tx_clone.send(AppState::Formatting);
@@ -316,9 +520,11 @@ impl InstallerApp {
                             FormatProgress::Unmounting => {
                                 p.message = "Unmounting drive...".to_string();
                             }
+                            #[cfg(not(target_os = "macos"))]
                             FormatProgress::CleaningDisk => {
                                 p.message = "Cleaning disk...".to_string();
                             }
+                            #[cfg(not(target_os = "macos"))]
                             FormatProgress::CreatingPartition => {
                                 p.message = "Creating partition...".to_string();
                             }
@@ -401,7 +607,8 @@ impl InstallerApp {
 
             // Step 3: Download
             let _ = state_tx_clone.send(AppState::Downloading);
-            log("Downloading release...");
+            let size_mb = asset.size as f64 / 1_048_576.0;
+            log(&format!("Downloading release ({:.1} MB)...", size_mb));
             crate::debug::log_section("Downloading Release");
 
             let download_path = temp_dir.join(&asset.name);
@@ -456,11 +663,15 @@ impl InstallerApp {
             if let Err(e) = download_asset(&asset_clone, &download_path_clone, dl_tx, cancel_token_clone.clone()).await {
                 if e.contains("cancelled") {
                     log("Download cancelled");
+                    let _ = tokio::fs::remove_file(&download_path_clone).await;
+                    crate::debug::log("Cleaned up partial download file");
                     let _ = state_tx_clone.send(AppState::Idle);
                     let _ = drive_poll_tx_clone.send(true);
                     return;
                 }
                 log(&format!("Download error: {}", e));
+                let _ = tokio::fs::remove_file(&download_path_clone).await;
+                crate::debug::log("Cleaned up partial download file");
                 let _ = state_tx_clone.send(AppState::Error);
                 let _ = drive_poll_tx_clone.send(true);
                 return;
@@ -472,8 +683,11 @@ impl InstallerApp {
             write_card_log("Download complete, starting extraction...");
 
             // Step 4: Extract to temp folder on local PC
-            // On Linux/macOS, use cache dir to avoid temp space issues
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            // On Linux, use the same temp_dir we already determined
+            // On macOS, give cache_dir() another try (original behavior)
+            #[cfg(target_os = "linux")]
+            let extract_base_dir = temp_dir.clone();
+            #[cfg(target_os = "macos")]
             let extract_base_dir = dirs::cache_dir().unwrap_or_else(|| temp_dir.clone());
             #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             let extract_base_dir = temp_dir.clone();
@@ -543,6 +757,8 @@ impl InstallerApp {
                     write_card_log("Extraction cancelled");
                     log("Extraction cancelled");
                     let _ = std::fs::remove_dir_all(&temp_extract_dir);
+                    let _ = tokio::fs::remove_file(&download_path).await;
+                    crate::debug::log("Cleaned up download file after cancellation");
                     let _ = state_tx_clone.send(AppState::Idle);
                     let _ = drive_poll_tx_clone.send(true);
                     return;
@@ -550,6 +766,8 @@ impl InstallerApp {
                 write_card_log(&format!("Extract error: {}", e));
                 log(&format!("Extract error: {}", e));
                 let _ = std::fs::remove_dir_all(&temp_extract_dir);
+                let _ = tokio::fs::remove_file(&download_path).await;
+                crate::debug::log("Cleaned up download file after error");
                 let _ = state_tx_clone.send(AppState::Error);
                 let _ = drive_poll_tx_clone.send(true);
                 return;
@@ -629,6 +847,8 @@ impl InstallerApp {
                     write_card_log("Copy cancelled");
                     log("Copy cancelled");
                     let _ = std::fs::remove_dir_all(&temp_extract_dir);
+                    let _ = tokio::fs::remove_file(&download_path).await;
+                    crate::debug::log("Cleaned up download file after cancellation");
                     let _ = state_tx_clone.send(AppState::Idle);
                     let _ = drive_poll_tx_clone.send(true);
                     return;
@@ -636,6 +856,8 @@ impl InstallerApp {
                 write_card_log(&format!("Copy error: {}", e));
                 log(&format!("Copy error: {}", e));
                 let _ = std::fs::remove_dir_all(&temp_extract_dir);
+                let _ = tokio::fs::remove_file(&download_path).await;
+                crate::debug::log("Cleaned up download file after error");
                 let _ = state_tx_clone.send(AppState::Error);
                 let _ = drive_poll_tx_clone.send(true);
                 return;
@@ -811,7 +1033,7 @@ impl eframe::App for InstallerApp {
         let is_dark = ctx.style().visuals.dark_mode;
         if is_dark != self.last_system_dark_mode {
             self.last_system_dark_mode = is_dark;
-            self.theme_state.current_config = self.get_theme_config(is_dark);
+            self.theme_state.current_config = self.get_theme_config();
         }
 
         // Theme editor panel
@@ -895,23 +1117,13 @@ impl eframe::App for InstallerApp {
             ctx.request_repaint();
         }
 
-        // Show modal dialogs for confirmation or status
-        let show_modal = matches!(
-            self.state,
-            AppState::AwaitingConfirmation
-                | AppState::Complete
-                | AppState::Ejecting
-                | AppState::Ejected
-                | AppState::Error
-        );
-
         if show_modal {
             // Background Dimmer
             egui::Area::new(egui::Id::from("modal_dimmer"))
                 .order(egui::Order::Foreground)
                 .fixed_pos(egui::pos2(0.0, 0.0))
                 .show(ctx, |ui| {
-                    let screen_rect = ui.ctx().screen_rect();
+                    let screen_rect = ui.ctx().content_rect();
                     ui.allocate_rect(screen_rect, egui::Sense::click()); // Block clicks
                     ui.painter()
                         .rect_filled(screen_rect, 0.0, egui::Color32::from_black_alpha(140));
@@ -987,7 +1199,7 @@ impl eframe::App for InstallerApp {
                             }
                             AppState::Complete => {
                                 ui.add_space(12.0);
-                                ui.colored_label(egui::Color32::from_rgb(91, 154, 91), "SUCCESS");
+                                ui.colored_label(egui::Color32::from_rgb(104, 157, 106), "SUCCESS");
                                 ui.add_space(12.0);
                                 let selected_repo_name = REPO_OPTIONS[self.selected_repo_idx].0;
                                 ui.label(format!("{} has been successfully installed.", selected_repo_name));
@@ -1048,7 +1260,7 @@ impl eframe::App for InstallerApp {
                                 ui.add_space(12.0);
                                 ui.label("SD card ejected!");
                                 ui.add_space(8.0);
-                                ui.colored_label(egui::Color32::from_rgb(91, 154, 91), "You may now safely remove it.");
+                                ui.colored_label(egui::Color32::from_rgb(104, 157, 106), "You may now safely remove it.");
                                 ui.add_space(15.0);
                                 if ui.button("OK").clicked() {
                                     self.state = AppState::Idle;
@@ -1084,25 +1296,48 @@ impl eframe::App for InstallerApp {
                         ui.vertical(|ui| {
                             ui.add_space(8.0);
                             ui.horizontal(|ui| {
-                                ui.heading("Installation Log");
+                                ui.heading("Debug Log");
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     if ui.button("X").on_hover_text("Close Log").clicked() {
                                         self.show_log = false;
-                                        let current_size = ui.ctx().screen_rect().size();
+                                        let current_size = ui.ctx().content_rect().size();
                                         ui.ctx().send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(current_size.x - 320.0, current_size.y)));
                                     }
                                 });
                             });
+
+                            // Copy to Clipboard button
+                            ui.horizontal(|ui| {
+                                if ui.button("📋 Copy to Clipboard").clicked() {
+                                    let log_path = crate::debug::get_log_path();
+                                    if let Ok(contents) = std::fs::read_to_string(&log_path) {
+                                        ui.ctx().copy_text(contents);
+                                    }
+                                }
+                                ui.label(format!("Log: {:?}", crate::debug::get_log_path().file_name().unwrap_or_default()));
+                            });
+
                             ui.separator();
-                            
+
                             egui::ScrollArea::vertical()
                                 .stick_to_bottom(true)
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| {
                                     ui.set_width(ui.available_width());
-                                    if let Ok(logs) = self.log_messages.lock() {
-                                        for msg in logs.iter() {
-                                            ui.label(msg);
+
+                                    // Read and display debug log file
+                                    let log_path = crate::debug::get_log_path();
+                                    match std::fs::read_to_string(&log_path) {
+                                        Ok(contents) => {
+                                            ui.add(
+                                                egui::TextEdit::multiline(&mut contents.as_str())
+                                                    .font(egui::TextStyle::Monospace)
+                                                    .desired_width(f32::INFINITY)
+                                                    .interactive(false)
+                                            );
+                                        }
+                                        Err(e) => {
+                                            ui.label(format!("Failed to read log file: {}", e));
                                         }
                                     }
                                 });
@@ -1134,8 +1369,8 @@ impl eframe::App for InstallerApp {
                     columns[0].allocate_ui_with_layout(
                         egui::Vec2::ZERO,
                         egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            
+                        |_ui| {
+
                         }
                     );
 
@@ -1146,9 +1381,9 @@ impl eframe::App for InstallerApp {
                             ui.add_space(12.0);
                             let is_dark = ctx.style().visuals.dark_mode;
                             let image = if is_dark {
-                                egui::include_image!("../data/icons/nextui_vectorized_shadow.svg")
+                                egui::include_image!("../assets/Icons/icon_dark.png")
                             } else {
-                                egui::include_image!("../data/icons/nextui_vectorized_shadow_dark.svg")
+                                egui::include_image!("../assets/Icons/icon.png")
                             };
                             ui.add(egui::Image::new(image).fit_to_exact_size(egui::vec2(60.0, 60.0)));
                         },
@@ -1158,14 +1393,14 @@ impl eframe::App for InstallerApp {
                         egui::Vec2::ZERO,
                         egui::Layout::right_to_left(egui::Align::TOP),
                         |ui| {
-                            //if ui.button("🎨").on_hover_text("Toggle Theme Editor (Ctrl+T)").clicked() {
-                            //    self.show_theme_editor = !self.show_theme_editor;
-                            //}
+                            if ui.button("🎨").on_hover_text("Toggle Theme Editor (Ctrl+T)").clicked() {
+                                self.show_theme_editor = !self.show_theme_editor;
+                            }
                             if ui.button("📜").on_hover_text("Toggle Log Area").clicked() {
                                 self.show_log = !self.show_log;
                                 
                                 // Adjust window size when toggling log
-                                let current_size = ctx.screen_rect().size();
+                                let current_size = ctx.content_rect().size();
                                 let new_width = if self.show_log {
                                     current_size.x + 320.0
                                 } else {
@@ -1320,7 +1555,7 @@ impl eframe::App for InstallerApp {
 
                                 ui.add(
                                     egui::ProgressBar::new(progress)
-                                        .fill(ui.visuals().selection.bg_fill).desired_height(6.0).desired_width(ui.available_width() / 2.0)
+                                        .fill(ui.visuals().selection.bg_fill).desired_height(16.0).desired_width(ui.available_width() / 2.0)
                                 );
                             }
                         });
@@ -1346,7 +1581,10 @@ impl eframe::App for InstallerApp {
                         
                         if !is_busy {
                             ui.add_enabled_ui(!is_busy && self.selected_drive_idx.is_some() && !self.drives.is_empty(), |ui| {
-                                if ui.button("Install").clicked() {
+                                let button = egui::Button::new("Install")
+                                    .min_size(egui::vec2(96.0, 48.0))
+                                    .fill(egui::Color32::from_rgb(104, 157, 106)); // Green
+                                if ui.add(button).clicked() {
                                     self.state = AppState::AwaitingConfirmation;
                                 }
                             });
@@ -1363,7 +1601,10 @@ impl eframe::App for InstallerApp {
                         ) && self.cancel_token.is_some();
 
                         if can_cancel {
-                            if ui.button("Cancel").clicked() {
+                            let button = egui::Button::new("Cancel")
+                                .min_size(egui::vec2(96.0, 48.0))
+                                .fill(egui::Color32::from_rgb(251, 73, 52)); // Red
+                            if ui.add(button).clicked() {
                                 self.cancel_installation();
                             }
                         }

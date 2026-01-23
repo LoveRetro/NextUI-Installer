@@ -7,14 +7,24 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 #[cfg(target_os = "windows")]
+#[allow(unused_imports)]
 use std::os::windows::process::CommandExt;
 
 // Embed platform-specific 7z binaries
 #[cfg(target_os = "windows")]
 const SEVEN_ZIP_EXE: &[u8] = include_bytes!("../assets/Windows/7zr.exe");
 
-#[cfg(target_os = "linux")]
-const SEVEN_ZIP_EXE: &[u8] = include_bytes!("../assets/Linux/7zzs");
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const SEVEN_ZIP_EXE: &[u8] = include_bytes!("../assets/Linux-x86_64/7zzs");
+
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+const SEVEN_ZIP_EXE: &[u8] = include_bytes!("../assets/Linux-aarch64/7zzs");
+
+#[cfg(all(target_os = "linux", target_arch = "x86"))]
+const SEVEN_ZIP_EXE: &[u8] = include_bytes!("../assets/Linux-i686/7zzs");
+
+#[cfg(all(target_os = "linux", target_arch = "arm"))]
+const SEVEN_ZIP_EXE: &[u8] = include_bytes!("../assets/Linux-armv7/7zzs");
 
 #[cfg(target_os = "macos")]
 const SEVEN_ZIP_EXE: &[u8] = include_bytes!("../assets/Mac/7zz");
@@ -75,35 +85,19 @@ pub async fn extract_7z(
         let bundled_path = std::env::current_exe()
             .ok()
             .and_then(|exe| {
-                // exe is at: NextUIInstaller.app/Contents/MacOS/nextui-installer
-                // We want: NextUIInstaller.app/Contents/Resources/7zz
+                // exe is at: SpruceOSInstaller.app/Contents/MacOS/spruceos-installer
+                // We want: SpruceOSInstaller.app/Contents/Resources/7zz
                 exe.parent()  // Contents/MacOS
                     .and_then(|p| p.parent())  // Contents
                     .map(|contents| contents.join("Resources/7zz"))
-            });
+            })
+            .filter(|path| path.exists());
 
-        if let Some(ref path) = bundled_path {
-            if path.exists() {
-                crate::debug::log(&format!("Using bundled 7zz from app bundle: {:?}", path));
-                (path.clone(), true)
-            } else {
-                crate::debug::log("Bundled 7zz not found, extracting to temp...");
-                // Fallback to temp extraction
-                let bin_dir = dirs::cache_dir().unwrap_or_else(std::env::temp_dir);
-                let temp_path = bin_dir.join(format!("7zr_{}", TEMP_PREFIX));
-                std::fs::write(&temp_path, SEVEN_ZIP_EXE)
-                    .map_err(|e| format!("Failed to extract 7z tool: {}", e))?;
-                use std::os::unix::fs::PermissionsExt;
-                let mut perms = std::fs::metadata(&temp_path)
-                    .map_err(|e| format!("Failed to get file permissions: {}", e))?
-                    .permissions();
-                perms.set_mode(0o755);
-                std::fs::set_permissions(&temp_path, perms)
-                    .map_err(|e| format!("Failed to set executable permission: {}", e))?;
-                crate::debug::log(&format!("Extracted 7z binary to: {:?}", temp_path));
-                (temp_path, false)
-            }
+        if let Some(path) = bundled_path {
+            crate::debug::log(&format!("Using bundled 7zz from app bundle: {:?}", path));
+            (path, true)
         } else {
+            crate::debug::log("Bundled 7zz not found, extracting to temp...");
             // Fallback to temp extraction
             let bin_dir = dirs::cache_dir().unwrap_or_else(std::env::temp_dir);
             let temp_path = bin_dir.join(format!("7zr_{}", TEMP_PREFIX));
@@ -125,7 +119,52 @@ pub async fn extract_7z(
     #[cfg(not(target_os = "macos"))]
     let (seven_zip_path, is_bundled) = {
         #[cfg(target_os = "linux")]
-        let bin_dir = dirs::cache_dir().unwrap_or_else(std::env::temp_dir);
+        let bin_dir = {
+            // If running as root via sudo or pkexec, try to use the actual user's cache directory
+            if unsafe { libc::geteuid() } == 0 {
+                // First check for SUDO_USER (command-line sudo)
+                if let Ok(sudo_user) = std::env::var("SUDO_USER") {
+                    let user_home = std::path::PathBuf::from(format!("/home/{}", sudo_user));
+                    if user_home.exists() {
+                        let user_cache = user_home.join(".cache");
+                        crate::debug::log(&format!("Extracting 7z binary using cache dir for sudo user {}: {:?}", sudo_user, user_cache));
+                        user_cache
+                    } else {
+                        dirs::cache_dir().unwrap_or_else(std::env::temp_dir)
+                    }
+                }
+                // Check for PKEXEC_UID (GUI elevation via pkexec)
+                else if let Ok(pkexec_uid) = std::env::var("PKEXEC_UID") {
+                    if let Ok(uid) = pkexec_uid.parse::<u32>() {
+                        let pwd = unsafe { libc::getpwuid(uid) };
+                        if !pwd.is_null() {
+                            let username = unsafe {
+                                std::ffi::CStr::from_ptr((*pwd).pw_name)
+                                    .to_string_lossy()
+                                    .to_string()
+                            };
+                            let user_home = std::path::PathBuf::from(format!("/home/{}", username));
+                            if user_home.exists() {
+                                let user_cache = user_home.join(".cache");
+                                crate::debug::log(&format!("Extracting 7z binary using cache dir for pkexec user {} (UID {}): {:?}", username, uid, user_cache));
+                                user_cache
+                            } else {
+                                dirs::cache_dir().unwrap_or_else(std::env::temp_dir)
+                            }
+                        } else {
+                            dirs::cache_dir().unwrap_or_else(std::env::temp_dir)
+                        }
+                    } else {
+                        dirs::cache_dir().unwrap_or_else(std::env::temp_dir)
+                    }
+                }
+                else {
+                    dirs::cache_dir().unwrap_or_else(std::env::temp_dir)
+                }
+            } else {
+                dirs::cache_dir().unwrap_or_else(std::env::temp_dir)
+            }
+        };
         #[cfg(not(target_os = "linux"))]
         let bin_dir = std::env::temp_dir();
 
@@ -183,25 +222,42 @@ pub async fn extract_7z(
         .spawn()
         .map_err(|e| format!("Failed to start 7z: {}", e))?;
 
+    crate::debug::log(&format!("7z process started (PID: {:?})", child.id()));
+
     // Take stdout for progress parsing
     let mut stdout = child.stdout.take()
         .ok_or_else(|| "Failed to capture 7z stdout".to_string())?;
 
-    // Take stderr for error capture and read in background to prevent deadlock
+    // Take stderr for real-time logging
     let mut stderr = child.stderr.take()
         .ok_or_else(|| "Failed to capture 7z stderr".to_string())?;
-    
+
+    // Log stderr in real-time instead of buffering
     let stderr_handle = tokio::spawn(async move {
         let mut buffer = Vec::new();
-        if stderr.read_to_end(&mut buffer).await.is_ok() {
-            buffer
-        } else {
-            Vec::new()
+        let mut chunk = [0u8; 512];
+        loop {
+            match stderr.read(&mut chunk).await {
+                Ok(0) => break, // EOF
+                Ok(n) => {
+                    let text = String::from_utf8_lossy(&chunk[..n]);
+                    if !text.trim().is_empty() {
+                        crate::debug::log(&format!("7z stderr: {}", text.trim()));
+                    }
+                    buffer.extend_from_slice(&chunk[..n]);
+                }
+                Err(e) => {
+                    crate::debug::log(&format!("Error reading 7z stderr: {}", e));
+                    break;
+                }
+            }
         }
+        buffer
     });
 
     let mut last_percent: u8 = 0;
     let mut buffer = [0u8; 1024];
+    let mut last_output_time = std::time::Instant::now();
 
     // Read stdout looking for progress
     // 7z with -bsp1 uses backspaces or carriage returns, so we read raw chunks
@@ -217,18 +273,34 @@ pub async fn extract_7z(
                 let _ = progress_tx.send(ExtractProgress::Cancelled);
                 return Err("Extraction cancelled".to_string());
             }
+            _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {
+                // Check if we've received output recently (within 5 minutes)
+                let elapsed = last_output_time.elapsed();
+                if elapsed > std::time::Duration::from_secs(300) {
+                    crate::debug::log(&format!("Extraction timeout: no output for {} seconds", elapsed.as_secs()));
+                    let _ = child.kill().await;
+                    if !is_bundled {
+                        let _ = std::fs::remove_file(&seven_zip_path);
+                    }
+                    let _ = progress_tx.send(ExtractProgress::Error("Extraction timed out (no progress for 5 minutes)".to_string()));
+                    return Err("Extraction timed out - the process may have hung".to_string());
+                }
+            }
             read_result = stdout.read(&mut buffer) => {
                 match read_result {
                     Ok(0) => {
                         // EOF - process finished output
+                        crate::debug::log("7z stdout reached EOF");
                         break;
                     }
                     Ok(n) => {
+                        last_output_time = std::time::Instant::now();
                         // Parse the buffer for percentage
                         let text = String::from_utf8_lossy(&buffer[..n]);
                         if let Some(percent) = parse_last_percentage(&text) {
                             if percent != last_percent {
                                 last_percent = percent;
+                                crate::debug::log(&format!("Extraction progress: {}%", percent));
                                 let _ = progress_tx.send(ExtractProgress::Progress { percent });
                             }
                         }
