@@ -1,19 +1,8 @@
-## To-Do
-- Merge twig flasher with rest of spruce version
-- Checkboxes for various additional packages:
-    - all themes
-    - all A30 ports
-    - all free games
-    - PortMaster (are we making this a separate archive?)
-- Backup and restore (update current installation instead of just fresh ones?)
-- Scrape boxart for roms
-- ~~Offline installer / updater mode - provide your own 7z or gz file instead of downloading~~ (Won't fix, not worth it)
-
-# SpruceOS Installer
+# NextUI Installer
 
 ## Overview
 
-**SpruceOS Installer** is an all-in-one **downloader, extractor, formatter, and installer** made for **SpruceOS**.
+**NextUI Installer** is an all-in-one **downloader, extractor, formatter, and installer** made for **NextUI**.
 
 It can be easily edited and adapted to work with **any custom firmware (CFW)** that requires files to be copied onto a **FAT32 SD card**, with little to no hassle.
 
@@ -34,20 +23,20 @@ The installer is distributed as a `.zip` containing a self-contained `.app` bund
 2. Extract the ZIP — you will get the following bundle and files:
 
     ```
-    SpruceOS Installer.app/
+    NextUI Installer.app/
     ├── Contents/
     │   ├── MacOS/
-    │   │   └── spruceos-installer
+    │   │   └── nextui-installer
     │   ├── Info.plist
     │   └── Resources/
     │       └── AppIcon.icns
     ```
 
-# SpruceOS Installer — Developer Guide
+# NextUI Installer — Developer Guide
 
 ## Overview
 
-**SpruceOS Installer** is an all-in-one Rust installer for flashing SD cards with SpruceOS (or other custom firmware).  
+**NextUI Installer** is an all-in-one Rust installer for flashing SD cards with NextUI (or other custom firmware).  
 This guide is intended for **developers** who want to **rebrand or customize the installer** for their own OS project.
 
 > **Note:** All builds are handled automatically via **GitHub Actions**.  
@@ -65,9 +54,9 @@ Edit these constants:
 
 | Field | Purpose | Example |
 |-------|---------|---------|
-| `APP_NAME` | Display name of your OS (window title, UI) | `"SpruceOS"` |
-| `VOLUME_LABEL` | FAT32 SD card label (max 11 chars, uppercase) | `"SPRUCEOS"` |
-| `REPO_OPTIONS` | Array of repositories to fetch releases from | `[("Stable", "spruceUI/spruceOS"), ("Nightlies", "spruceUI/spruceOSNightlies")]` |
+| `APP_NAME` | Display name of your OS (window title, UI) | `"NextUI"` |
+| `VOLUME_LABEL` | FAT32 SD card label (max 11 chars, uppercase) | `"NEXTUI"` |
+| `REPO_OPTIONS` | Array of repositories to fetch releases from | `[("Stable", "LoveRetro/NextUI"), ("Nightlies", "LoveRetro/NextUI-nightly")]` |
 | `DEFAULT_REPO_INDEX` | Index of the default repo selection (0 = first) | `0` |
 | `ASSET_EXTENSION` | File extension to download from releases | `".7z"` or `".zip"` |
 | `WINDOW_SIZE` | Default window size (width, height) | `(679.5, 420.0)` |
@@ -85,7 +74,7 @@ The installer's visual theme is defined in the `get_theme_config()` method (arou
 
 **Key color fields to customize:**
 
-| Field | Purpose | SpruceOS Default (RGBA) |
+| Field | Purpose | NextUI Default (RGBA) |
 |-------|---------|------------------------|
 | `override_text_color` | Primary text color | `[251, 241, 199, 255]` (cream) |
 | `override_weak_text_color` | Secondary/dimmed text | `[124, 111, 100, 255]` (gray) |
@@ -208,8 +197,8 @@ First, build the installer locally so you can use the theme editor:
 # https://rustup.rs/
 
 # Clone and build
-git clone https://github.com/spruceUI/spruceOS-Installer.git
-cd spruceOS-Installer
+git clone https://github.com/LoveRetro/NextUI-Installer.git
+cd NextUI-Installer
 cargo run
 ```
 
@@ -286,4 +275,4 @@ GitHub Actions will automatically build your customized installer for all platfo
 
 ---
 
-> **PLEASE:** Keep the original spruceOS authors in `Cargo.toml` and `Info.plist` for credit. Add your name alongside ours.
+> **PLEASE:** Keep the original authors in `Cargo.toml` and `Info.plist` for credit. Add your name alongside ours.

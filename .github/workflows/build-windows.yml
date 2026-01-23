@@ -1,7 +1,10 @@
 name: Build Windows
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request: {}
 
 env:
   CARGO_TERM_COLOR: always
@@ -24,13 +27,13 @@ jobs:
 
       - name: Rename binary
         shell: bash
-        run: cp "target/x86_64-pc-windows-msvc/release/spruceos-installer.exe" "spruceos-installer-windows.exe"
+        run: cp "target/x86_64-pc-windows-msvc/release/nextui-installer.exe" "nextui-installer-windows.exe"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: spruceos-installer-windows.exe
-          path: spruceos-installer-windows.exe
+          name: nextui-installer-windows.exe
+          path: nextui-installer-windows.exe
 
   release:
     needs: build
@@ -42,7 +45,7 @@ jobs:
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
-          name: spruceos-installer-windows.exe
+          name: nextui-installer-windows.exe
           path: artifacts
 
       - name: Upload to Beta Release

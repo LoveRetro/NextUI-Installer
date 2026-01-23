@@ -175,7 +175,7 @@ impl InstallerApp {
             last_system_dark_mode: is_dark,
         };
 
-        app.theme_state.current_config = app.get_theme_config();
+        app.theme_state.current_config = app.get_theme_config(is_dark);
 
         // Initial sync load
         app.drives = get_removable_drives();
@@ -184,77 +184,15 @@ impl InstallerApp {
         app
     }
 
-    fn get_theme_config(&self) -> ThemeConfig {
-        ThemeConfig {
-            name: "SpruceOS".to_string(),
-            dark_mode: true,
-            override_text_color: Some([251, 241, 199, 255]),
-            override_weak_text_color: Some([124, 111, 100, 255]),
-            override_hyperlink_color: Some([131, 165, 152, 255]),
-            override_faint_bg_color: Some([48, 48, 48, 255]),
-            override_extreme_bg_color: Some([29, 32, 33, 255]),
-            override_code_bg_color: Some([60, 56, 54, 255]),
-            override_warn_fg_color: Some([214, 93, 14, 255]),
-            override_error_fg_color: Some([204, 36, 29, 255]),
-            override_window_fill: Some([40, 40, 40, 255]),
-            override_window_stroke_color: None,
-            override_window_stroke_width: None,
-            override_window_corner_radius: None,
-            override_window_shadow_size: None,
-            override_panel_fill: Some([40, 40, 40, 255]),
-            override_popup_shadow_size: None,
-            override_selection_bg: Some([215, 180, 95, 255]),
-            override_selection_stroke_color: None,
-            override_selection_stroke_width: None,
-            override_widget_noninteractive_bg_fill: None,
-            override_widget_noninteractive_weak_bg_fill: None,
-            override_widget_noninteractive_bg_stroke_color: None,
-            override_widget_noninteractive_bg_stroke_width: None,
-            override_widget_noninteractive_corner_radius: None,
-            override_widget_noninteractive_fg_stroke_color: None,
-            override_widget_noninteractive_fg_stroke_width: None,
-            override_widget_noninteractive_expansion: None,
-            override_widget_inactive_bg_fill: Some([215, 180, 95, 255]),
-            override_widget_inactive_weak_bg_fill: None,
-            override_widget_inactive_bg_stroke_color: Some([124, 111, 100, 100]),
-            override_widget_inactive_bg_stroke_width: None,
-            override_widget_inactive_corner_radius: None,
-            override_widget_inactive_fg_stroke_color: Some([104, 157, 106, 255]),
-            override_widget_inactive_fg_stroke_width: None,
-            override_widget_inactive_expansion: None,
-            override_widget_hovered_bg_fill: Some([215, 180, 95, 60]),
-            override_widget_hovered_weak_bg_fill: None,
-            override_widget_hovered_bg_stroke_color: Some([215, 180, 95, 255]),
-            override_widget_hovered_bg_stroke_width: None,
-            override_widget_hovered_corner_radius: None,
-            override_widget_hovered_fg_stroke_color: None,
-            override_widget_hovered_fg_stroke_width: None,
-            override_widget_hovered_expansion: None,
-            override_widget_active_bg_fill: Some([215, 180, 95, 100]),
-            override_widget_active_weak_bg_fill: None,
-            override_widget_active_bg_stroke_color: Some([215, 180, 95, 255]),
-            override_widget_active_bg_stroke_width: None,
-            override_widget_active_corner_radius: None,
-            override_widget_active_fg_stroke_color: None,
-            override_widget_active_fg_stroke_width: None,
-            override_widget_active_expansion: None,
-            override_widget_open_bg_fill: None,
-            override_widget_open_weak_bg_fill: None,
-            override_widget_open_bg_stroke_color: None,
-            override_widget_open_bg_stroke_width: None,
-            override_widget_open_corner_radius: None,
-            override_widget_open_fg_stroke_color: None,
-            override_widget_open_fg_stroke_width: None,
-            override_widget_open_expansion: None,
-            override_resize_corner_size: None,
-            override_text_cursor_width: None,
-            override_clip_rect_margin: None,
-            override_button_frame: None,
-            override_collapsing_header_frame: None,
-            override_indent_has_left_vline: None,
-            override_striped: None,
-            override_slider_trailing_fill: None,
-        }
+    fn get_theme_config(&self, is_dark: bool) -> ThemeConfig {
+        let mut config = if is_dark {
+            ThemeConfig::dark_preset()
+        } else {
+            ThemeConfig::light_preset()
+        };
+        config.override_selection_bg = Some([124, 27, 69, 255]);
+        config.override_selection_stroke_color = Some([224, 210, 210, 255]);
+        config
     }
 
     fn ensure_selection_valid(&mut self) {
@@ -1033,7 +971,7 @@ impl eframe::App for InstallerApp {
         let is_dark = ctx.style().visuals.dark_mode;
         if is_dark != self.last_system_dark_mode {
             self.last_system_dark_mode = is_dark;
-            self.theme_state.current_config = self.get_theme_config();
+            self.theme_state.current_config = self.get_theme_config(is_dark);
         }
 
         // Theme editor panel
@@ -1381,9 +1319,9 @@ impl eframe::App for InstallerApp {
                             ui.add_space(12.0);
                             let is_dark = ctx.style().visuals.dark_mode;
                             let image = if is_dark {
-                                egui::include_image!("../assets/Icons/icon_dark.png")
+                                egui::include_image!("../data/icons/nextui_vectorized_shadow.svg")
                             } else {
-                                egui::include_image!("../assets/Icons/icon.png")
+                                egui::include_image!("../data/icons/nextui_vectorized_shadow_dark.svg")
                             };
                             ui.add(egui::Image::new(image).fit_to_exact_size(egui::vec2(60.0, 60.0)));
                         },
@@ -1555,7 +1493,7 @@ impl eframe::App for InstallerApp {
 
                                 ui.add(
                                     egui::ProgressBar::new(progress)
-                                        .fill(ui.visuals().selection.bg_fill).desired_height(16.0).desired_width(ui.available_width() / 2.0)
+                                        .fill(ui.visuals().selection.bg_fill).desired_height(6.0).desired_width(ui.available_width() / 2.0)
                                 );
                             }
                         });
@@ -1581,10 +1519,7 @@ impl eframe::App for InstallerApp {
                         
                         if !is_busy {
                             ui.add_enabled_ui(!is_busy && self.selected_drive_idx.is_some() && !self.drives.is_empty(), |ui| {
-                                let button = egui::Button::new("Install")
-                                    .min_size(egui::vec2(96.0, 48.0))
-                                    .fill(egui::Color32::from_rgb(104, 157, 106)); // Green
-                                if ui.add(button).clicked() {
+                                if ui.button("Install").clicked() {
                                     self.state = AppState::AwaitingConfirmation;
                                 }
                             });
@@ -1601,10 +1536,7 @@ impl eframe::App for InstallerApp {
                         ) && self.cancel_token.is_some();
 
                         if can_cancel {
-                            let button = egui::Button::new("Cancel")
-                                .min_size(egui::vec2(96.0, 48.0))
-                                .fill(egui::Color32::from_rgb(251, 73, 52)); // Red
-                            if ui.add(button).clicked() {
+                            if ui.button("Cancel").clicked() {
                                 self.cancel_installation();
                             }
                         }
