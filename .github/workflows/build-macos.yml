@@ -6,11 +6,6 @@ on:
       - main
   pull_request: {}
 
-permissions:
-  attestations: write
-  contents: read
-  id-token: write
-
 env:
   CARGO_TERM_COLOR: always
 
@@ -39,16 +34,16 @@ jobs:
           mkdir -p AppIcon.iconset
 
           # Convert PNG to various sizes required for macOS icon
-          sips -z 16 16     "assets/Icons/icon-macOS-Dark-1024x1024@1x.png" --out "AppIcon.iconset/icon_16x16.png"
-          sips -z 32 32     "assets/Icons/icon-macOS-Dark-1024x1024@1x.png" --out "AppIcon.iconset/icon_16x16@2x.png"
-          sips -z 32 32     "assets/Icons/icon-macOS-Dark-1024x1024@1x.png" --out "AppIcon.iconset/icon_32x32.png"
-          sips -z 64 64     "assets/Icons/icon-macOS-Dark-1024x1024@1x.png" --out "AppIcon.iconset/icon_32x32@2x.png"
-          sips -z 128 128   "assets/Icons/icon-macOS-Dark-1024x1024@1x.png" --out "AppIcon.iconset/icon_128x128.png"
-          sips -z 256 256   "assets/Icons/icon-macOS-Dark-1024x1024@1x.png" --out "AppIcon.iconset/icon_128x128@2x.png"
-          sips -z 256 256   "assets/Icons/icon-macOS-Dark-1024x1024@1x.png" --out "AppIcon.iconset/icon_256x256.png"
-          sips -z 512 512   "assets/Icons/icon-macOS-Dark-1024x1024@1x.png" --out "AppIcon.iconset/icon_256x256@2x.png"
-          sips -z 512 512   "assets/Icons/icon-macOS-Dark-1024x1024@1x.png" --out "AppIcon.iconset/icon_512x512.png"
-          sips -z 1024 1024 "assets/Icons/icon-macOS-Dark-1024x1024@1x.png" --out "AppIcon.iconset/icon_512x512@2x.png"
+          sips -z 16 16     "assets/Icons/icon.png" --out "AppIcon.iconset/icon_16x16.png"
+          sips -z 32 32     "assets/Icons/icon.png" --out "AppIcon.iconset/icon_16x16@2x.png"
+          sips -z 32 32     "assets/Icons/icon.png" --out "AppIcon.iconset/icon_32x32.png"
+          sips -z 64 64     "assets/Icons/icon.png" --out "AppIcon.iconset/icon_32x32@2x.png"
+          sips -z 128 128   "assets/Icons/icon.png" --out "AppIcon.iconset/icon_128x128.png"
+          sips -z 256 256   "assets/Icons/icon.png" --out "AppIcon.iconset/icon_128x128@2x.png"
+          sips -z 256 256   "assets/Icons/icon.png" --out "AppIcon.iconset/icon_256x256.png"
+          sips -z 512 512   "assets/Icons/icon.png" --out "AppIcon.iconset/icon_256x256@2x.png"
+          sips -z 512 512   "assets/Icons/icon.png" --out "AppIcon.iconset/icon_512x512.png"
+          sips -z 1024 1024 "assets/Icons/icon.png" --out "AppIcon.iconset/icon_512x512@2x.png"
 
           # Convert iconset to icns
           iconutil -c icns AppIcon.iconset -o AppIcon.icns

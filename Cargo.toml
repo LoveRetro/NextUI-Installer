@@ -2,8 +2,8 @@
 name = "nextui-installer"
 version = "1.0.0"
 edition = "2021"
-description = "NextUI SD Card Installer"
-authors = ["SpruceOS Team", "NextUI Team"]
+description = "NextUI SD Card Setup"
+authors = ["spruceOS Team", "NextUI Team"]
 license = "GPL-3.0-or-later"
 
 [features]
@@ -44,3 +44,4 @@ embed-resource = "2"
 opt-level = "z"
 lto = true
 strip = "debuginfo"
+
